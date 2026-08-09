@@ -2,7 +2,7 @@ import sqlite3
 import telebot
 
 # تۆکنی بۆتەکەی خۆت لێرە دابنە
-TOKEN = 'تۆکنەکەی_بۆتەکەت_لێرە_دابنە'
+TOKEN = '8781704084:AAF82RxWrCRkzOlLFKdi891FmhPMuqRPbcI'
 bot = telebot.TeleBot(TOKEN)
 
 # سڕینەوەی هەر وێبهووکێکی کۆن بۆ ئەوەی ڕێگری لە کێشە بگرێت
