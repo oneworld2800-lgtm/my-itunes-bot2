@@ -3,7 +3,7 @@ import sqlite3
 import threading
 import datetime
 import time
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 TOKEN = '8781704084:AAF82RxWrCRkzOlLFKdi891FmhPMuqRPbcI'
 bot = telebot.TeleBot(TOKEN)
@@ -63,7 +63,6 @@ def init_db():
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("store_status", "open")')
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("close_reason", "")')
         
-        # ڕێکخستنەکانی سیستەمی داخستنی ئۆتۆماتیکی
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_enabled", "0")')
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_start", "00:00")')
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_end", "08:00")')
@@ -167,8 +166,6 @@ def forward_to_admin(message):
     bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
-# ---------------- بەشی داخستن و کردنەوە (دەستی و ئۆتۆماتیکی) ---------------- #
-
 @bot.message_handler(commands=['autoclose'])
 def set_autoclose(message):
     if message.chat.id == ADMIN_ID:
@@ -239,8 +236,6 @@ def open_store(message):
             except: pass
                 
         bot.reply_to(message, f"🔓 فرۆشگا کرایەوە و نامەی ئاگاداری بۆ {count} کڕیار نێردرا.")
-
-# -------------------------------------------------------------------------------- #
 
 @bot.message_handler(commands=['allow'])
 def allow_user(message):
@@ -775,10 +770,46 @@ def handle_confirm_buy(call):
     else:
         bot.answer_callback_query(call.id, f"ببورە، کارتی پێویست لە کۆگادا نەماوە بۆ داواکارییەکەت.", show_alert=True)
 
-# ---------------- ئامێری چاودێری کات بۆ سیستەمی تەماتیک ---------------- #
+# ---------------- ڕێکخستنی مێنیوی تایبەت ---------------- #
+def setup_bot_commands():
+    user_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")
+    ]
+    
+    admin_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن"),
+        BotCommand("allow", "✅ ڕێگەپێدان بە کڕیار"),
+        BotCommand("remove", "❌ سڕینەوەی کڕیار"),
+        BotCommand("ban", "🚫 سزادانی کڕیار"),
+        BotCommand("unban", "♻️ لابردنی سزا"),
+        BotCommand("users", "👥 لیستی کڕیارەکان"),
+        BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
+        BotCommand("close", "🔒 داخستنی فرۆشگا"),
+        BotCommand("autoclose", "⏰ سیستەمی داخستنی تەماتیک"),
+        BotCommand("add", "➕ زیادکردنی کۆد"),
+        BotCommand("delcode", "🗑 سڕینەوەی کۆد"),
+        BotCommand("clearcodes", "⚠️ خاوێنکردنەوەی کۆگا"),
+        BotCommand("stock", "📦 ئاماری کۆگا"),
+        BotCommand("debts", "📒 دەفتەری قەرزەکان"),
+        BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
+        BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
+        BotCommand("broadcast", "📢 ناردنی ئاگاداری")
+    ]
+    
+    try:
+        # دانانی فەرمانە ئاساییەکان بۆ هەموو خەڵک
+        bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+        # دانانی فەرمانە زۆرەکان تەنها بۆ ئەدمین (هیلال)
+        bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
+    except Exception as e:
+        print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
+
 def auto_schedule_checker():
     while True:
-        # ڕێکخستنی کات بۆ سەر کاتی کوردستان
         now = datetime.datetime.utcnow() + datetime.timedelta(hours=3) 
         current_hm = now.strftime('%H:%M')
         
@@ -802,7 +833,6 @@ def auto_schedule_checker():
                     last_t = last_trigger[0] if last_trigger else ""
                     trigger_key = f"{now.strftime('%Y-%m-%d')}_{current_hm}"
                     
-                    # داخرانی ئۆتۆماتیکی
                     if current_hm == start_t and last_t != trigger_key:
                         c.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ("last_auto_trigger", ?)', (trigger_key,))
                         c.execute('SELECT value FROM settings WHERE key="store_status"')
@@ -820,7 +850,6 @@ def auto_schedule_checker():
                         else:
                             conn.commit()
                             
-                    # کرانەوەی ئۆتۆماتیکی
                     elif current_hm == end_t and last_t != trigger_key:
                         c.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ("last_auto_trigger", ?)', (trigger_key,))
                         c.execute('SELECT value FROM settings WHERE key="store_status"')
@@ -836,11 +865,11 @@ def auto_schedule_checker():
                                 except: pass
                         else:
                             conn.commit()
-        time.sleep(30) # هەموو ٣٠ چرکە جارێک کاتەکە دەپشکنێت
+        time.sleep(30)
 
-# خستنە کاری سیستەمی چاودێری لە باکگراوند
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 
-print("بۆتەکە ئێستا کار دەکات لەگەڵ سیستەمی تەماتیکی کرانەوە و داخستن...")
+print("بۆتەکە ئێستا کار دەکات و فەرمانەکان جیاکرانەوە...")
+setup_bot_commands()
 bot.infinity_polling()
