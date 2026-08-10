@@ -2,13 +2,13 @@ import telebot
 import sqlite3
 import threading
 import datetime
+import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 
 TOKEN = '8781704084:AAF82RxWrCRkzOlLFKdi891FmhPMuqRPbcI'
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 1229224919
 
-# سڕینەوەی وێبهووکە کۆنەکە بۆ ڕێگریکردن لە کێشە لە Railway
 bot.remove_webhook()
 
 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
@@ -54,6 +54,20 @@ def init_db():
                 ban_until TIMESTAMP
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("store_status", "open")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("close_reason", "")')
+        
+        # ڕێکخستنەکانی سیستەمی داخستنی ئۆتۆماتیکی
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_enabled", "0")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_start", "00:00")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_end", "08:00")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("last_auto_trigger", "")')
         conn.commit()
 
 init_db()
@@ -92,6 +106,17 @@ def get_ban_status(user_id):
                 return None
         return None
 
+def get_store_status():
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT value FROM settings WHERE key="store_status"')
+        status_res = c.fetchone()
+        c.execute('SELECT value FROM settings WHERE key="close_reason"')
+        reason_res = c.fetchone()
+        status = status_res[0] if status_res else "open"
+        reason = reason_res[0] if reason_res else "فرۆشگا داخراوە."
+        return status, reason
+
 def get_main_menu(user_id):
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(
@@ -112,9 +137,110 @@ def send_welcome(message):
             c = conn.cursor()
             c.execute('UPDATE allowed_users SET name = ? WHERE user_id = ?', (message.from_user.first_name, user_id))
             conn.commit()
-        bot.reply_to(message, "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس.\nتکایە لە دوگمەکانی خوارەوە هەڵبژێرە:", reply_markup=get_main_menu(user_id))
+        
+        welcome_text = (
+            "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس. 🍏\n\n"
+            "ئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت.\n\n"
+            "تکایە لە دوگمەکانی خوارەوە هەڵبژێرە:"
+        )
+        bot.reply_to(message, welcome_text, reply_markup=get_main_menu(user_id), parse_mode='Markdown')
     else:
         bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە و تەنها بۆ کەسانی ڕێگەپێدراوە.\n\nئایدی تۆ: `{user_id}`\nئەم ئایدییە بنێرە بۆ خاوەنی بۆتەکە.", parse_mode='Markdown')
+
+@bot.message_handler(commands=['about'])
+def about_store(message):
+    if is_allowed(message.from_user.id):
+        text = (
+            "🍏 **دەربارەی فرۆشگای ئایتونس**\n\n"
+            "ئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت بۆ دابینکردنی خێراترین و باوەڕپێکراوترین کارتی ئایتونس.\n\n"
+            "بۆ هەر کێشەیەک یان داواکارییەک، دەتوانیت لە ڕێگەی فەرمانی /contact وە نامەمان بۆ بنێریت."
+        )
+        bot.reply_to(message, text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['contact'])
+def contact_admin(message):
+    if is_allowed(message.from_user.id):
+        msg = bot.reply_to(message, "تکایە نامەکەت یان پرسیارەکەت بنووسە، ڕاستەوخۆ دەگاتە هیلال:")
+        bot.register_next_step_handler(msg, forward_to_admin)
+
+def forward_to_admin(message):
+    bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
+    bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
+
+# ---------------- بەشی داخستن و کردنەوە (دەستی و ئۆتۆماتیکی) ---------------- #
+
+@bot.message_handler(commands=['autoclose'])
+def set_autoclose(message):
+    if message.chat.id == ADMIN_ID:
+        args = message.text.split()
+        if len(args) == 2 and args[1].lower() == "off":
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE settings SET value="0" WHERE key="auto_close_enabled"')
+                conn.commit()
+            bot.reply_to(message, "✅ سیستەمی داخستنی ئۆتۆماتیکی (تەماتیک) ڕاگیرا.")
+        elif len(args) == 3:
+            start_t = args[1]
+            end_t = args[2]
+            if ":" in start_t and ":" in end_t:
+                with db_lock:
+                    c = conn.cursor()
+                    c.execute('UPDATE settings SET value="1" WHERE key="auto_close_enabled"')
+                    c.execute('UPDATE settings SET value=? WHERE key="auto_close_start"', (start_t,))
+                    c.execute('UPDATE settings SET value=? WHERE key="auto_close_end"', (end_t,))
+                    conn.commit()
+                bot.reply_to(message, f"✅ سیستەمی ئۆتۆماتیکی چالاککرا.\nفرۆشگا هەموو ڕۆژێک لە کاتژمێر **{start_t}** دادەخرێت و لە کاتژمێر **{end_t}** دەکرێتەوە بە شێوەیەکی تەماتیک.", parse_mode='Markdown')
+            else:
+                bot.reply_to(message, "شێواز هەڵەیە. تکایە بە فۆڕماتی 24 کاتژمێری بینووسە. نموونە:\n`/autoclose 00:00 08:00`", parse_mode='Markdown')
+        else:
+            bot.reply_to(message, "بۆ چالاککردنی تەماتیک: `/autoclose 00:00 08:00`\nبۆ ڕاگرتنی تەماتیک: `/autoclose off`", parse_mode='Markdown')
+
+@bot.message_handler(commands=['close'])
+def close_store(message):
+    if message.chat.id == ADMIN_ID:
+        reason = message.text.replace('/close', '').strip()
+        if not reason:
+            reason = "لە ئێستادا فرۆشگا داخراوە، کاتێکی تر هەوڵ بدەرەوە."
+            
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE settings SET value=? WHERE key="store_status"', ("closed",))
+            c.execute('UPDATE settings SET value=? WHERE key="close_reason"', (reason,))
+            
+            c.execute('SELECT user_id FROM allowed_users')
+            users = c.fetchall()
+            conn.commit()
+
+        count = 0
+        for (uid,) in users:
+            try:
+                bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگاوە:**\n\n🔒 فرۆشگاکە داخرا.\nکات/هۆکار: {reason}", parse_mode='Markdown')
+                count += 1
+            except: pass
+                
+        bot.reply_to(message, f"🔒 فرۆشگا داخرا و نامەی ئاگاداری بۆ {count} کڕیار نێردرا.")
+
+@bot.message_handler(commands=['open'])
+def open_store(message):
+    if message.chat.id == ADMIN_ID:
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE settings SET value=? WHERE key="store_status"', ("open",))
+            
+            c.execute('SELECT user_id FROM allowed_users')
+            users = c.fetchall()
+            conn.commit()
+
+        count = 0
+        for (uid,) in users:
+            try:
+                bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگاوە:**\n\n🔓 فرۆشگاکە ئێستا کرایەوە! 🍏\nدەتوانن کڕینەکانتان ئەنجام بدەن.", parse_mode='Markdown')
+                count += 1
+            except: pass
+                
+        bot.reply_to(message, f"🔓 فرۆشگا کرایەوە و نامەی ئاگاداری بۆ {count} کڕیار نێردرا.")
+
+# -------------------------------------------------------------------------------- #
 
 @bot.message_handler(commands=['allow'])
 def allow_user(message):
@@ -207,8 +333,6 @@ def list_users(message):
         else:
             bot.reply_to(message, "هیچ بەکارهێنەرێکی ڕێگەپێدراو نییە.")
 
-
-# ---------------- بەشی نوێ: سفرکردنەوەی قەرزەکان بە لیستی زیرەک ---------------- #
 def show_clear_debt_menu(chat_id, message_id=None):
     with db_lock:
         c = conn.cursor()
@@ -243,12 +367,10 @@ def show_clear_debt_menu(chat_id, message_id=None):
 def clear_debt(message):
     if message.chat.id == ADMIN_ID:
         args = message.text.split()[1:]
-        # ئەگەر تەنها نووسی /clear بێ هیچ شتێک، لیستەکە دەکرێتەوە
         if not args:
             show_clear_debt_menu(message.chat.id)
             return
 
-        # ئەگەر ئایدی یان وشەی all ی نووسی (بۆ شێوازی کۆن)
         with db_lock:
             c = conn.cursor()
             if args[0].lower() == 'all':
@@ -263,19 +385,15 @@ def clear_debt(message):
                         c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_id,))
                         cleared_count += 1
                         try:
-                            bot.send_message(target_id, "🎉 پیرۆزە! خاوەن فرۆشگا هەموو قەرزەکانی لەسەرت سفر کردەوە.")
-                        except:
-                            pass
-                    except ValueError:
-                        pass
+                            bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+                        except: pass
+                    except ValueError: pass
                 conn.commit()
                 bot.reply_to(message, f"✅ قەرزی **{cleared_count}** بەکارهێنەر بە سەرکەوتوویی سفر کرایەوە.", parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cd_'))
 def handle_clear_debt_callback(call):
-    if call.from_user.id != ADMIN_ID:
-        return
-
+    if call.from_user.id != ADMIN_ID: return
     action = call.data.split('_')[1]
 
     if action == 'all':
@@ -293,13 +411,9 @@ def handle_clear_debt_callback(call):
             conn.commit()
         bot.answer_callback_query(call.id, "قەرزی کڕیارەکە سفر کرایەوە! ✅")
         try:
-            bot.send_message(target_id, "🎉 پیرۆزە! خاوەن فرۆشگا هەموو قەرزەکانی لەسەرت سفر کردەوە.")
-        except:
-            pass
-        # دوای سفرکردنەوەی کەسەکە، لیستەکە نوێ دەکەینەوە
+            bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+        except: pass
         show_clear_debt_menu(call.message.chat.id, call.message.message_id)
-# -------------------------------------------------------------------------------- #
-
 
 @bot.message_handler(commands=['add'])
 def add_codes(message):
@@ -348,8 +462,7 @@ def manage_codes(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('viewc_') or call.data.startswith('rmc_') or call.data == 'delcode_back')
 def handle_delcode_callbacks(call):
-    if call.from_user.id != ADMIN_ID:
-        return
+    if call.from_user.id != ADMIN_ID: return
 
     if call.data == 'delcode_back':
         with db_lock:
@@ -388,35 +501,21 @@ def handle_delcode_callbacks(call):
             for cid, code in codes:
                 markup.add(InlineKeyboardButton(f"❌ سڕینەوە: {code}", callback_data=f"rmc_{cid}_{ctype}"))
             markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="delcode_back"))
-
             bot.edit_message_text(f"لیستی کۆدەکانی {ctype}$:\n(بۆ سڕینەوەی هەر دانەیەک تەنها کرتە لە دوگمەکەی بکە)", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
         else:
             bot.answer_callback_query(call.id, f"هیچ کۆدێکی {ctype}$ نەماوە.", show_alert=True)
-            with db_lock:
-                c = conn.cursor()
-                c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
-                results = c.fetchall()
-            if results:
-                markup = InlineKeyboardMarkup(row_width=1)
-                for ctype, count in results:
-                    markup.add(InlineKeyboardButton(f"جۆری {ctype}$ ({count} دانە ماوە)", callback_data=f"viewc_{ctype}"))
-                bot.edit_message_text("تکایە ئەو جۆرە هەڵبژێرە کە دەتەوێت کۆدەکانی ببینی و لایانبەری:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
-            else:
-                bot.edit_message_text("کۆگاکە بەتاڵە.", chat_id=call.message.chat.id, message_id=call.message.message_id)
 
 @bot.message_handler(commands=['clearcodes'])
 def clear_codes(message):
     if message.chat.id == ADMIN_ID:
         try:
             target = message.text.replace('/clearcodes ', '').strip()
-            if not target:
-                raise ValueError
-
+            if not target: raise ValueError
             with db_lock:
                 c = conn.cursor()
                 if target.lower() == 'all':
                     c.execute('DELETE FROM codes')
-                    msg = "🗑️ **هەموو کۆدەکانی کۆگا بەتەواوی سڕانەوە.** کۆگاکە ئێستا خاڵییە."
+                    msg = "🗑️ **هەموو کۆدەکانی کۆگا بەتەواوی سڕانەوە.**"
                 else:
                     c.execute('DELETE FROM codes WHERE card_type = ?', (target,))
                     msg = f"🗑️ هەموو کۆدەکانی جۆری **{target}$** سڕانەوە."
@@ -437,7 +536,7 @@ def set_limit(message):
                 c.execute('UPDATE debts SET credit_limit = ? WHERE user_id = ?', (new_limit, target_id))
                 conn.commit()
             bot.reply_to(message, f"سنووری قەرزی بەکارهێنەر {target_id} کرا بە {new_limit} دۆلار.")
-            bot.send_message(target_id, f"ئاگاداری: سنووری قەرزەکەت لەلایەن خاوەن فرۆشگاوە نوێکرایەوە بۆ {new_limit} دۆلار.")
+            bot.send_message(target_id, f"ئاگاداری: سنووری قەرزەکەت لەلایەن هیلال نوێکرایەوە بۆ {new_limit} دۆلار.")
         except:
             bot.reply_to(message, "شێواز هەڵەیە: /setlimit ID AMOUNT")
 
@@ -498,18 +597,20 @@ def broadcast(message):
                 try:
                     bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگا:**\n\n{text}", parse_mode='Markdown')
                     count += 1
-                except:
-                    pass
+                except: pass
             bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
         else:
             bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
 
-def send_buy_menu(message):
-    if is_allowed(message.from_user.id):
-        markup = InlineKeyboardMarkup(row_width=1)
-        for ctype, price in prices.items():
-            markup.add(InlineKeyboardButton(f"{ctype} دۆلاری - {price:,} دینار", callback_data=f"buy_{ctype}"))
-        bot.reply_to(message, "تکایە جۆری کارت هەڵبژێرە:", reply_markup=markup)
+def send_buy_menu(chat_id, message_id=None):
+    markup = InlineKeyboardMarkup(row_width=1)
+    for ctype, price in prices.items():
+        markup.add(InlineKeyboardButton(f"{ctype} دۆلاری - {price:,} دینار", callback_data=f"buy_{ctype}"))
+    text = "تکایە جۆری کارت هەڵبژێرە:"
+    if message_id:
+        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup)
 
 @bot.message_handler(func=lambda message: message.text in ["🛒 کڕینی کارت", "💰 قەرزەکانم", "📜 مێژووی کڕینەکان", "📦 ئاماری کۆگا"])
 def handle_text_buttons(message):
@@ -517,18 +618,22 @@ def handle_text_buttons(message):
     if not is_allowed(uid): return
 
     if message.text == "🛒 کڕینی کارت":
+        status, reason = get_store_status()
+        if status == "closed":
+            bot.reply_to(message, f"🚫 **فرۆشگا داخراوە**\n\n{reason}", parse_mode='Markdown')
+            return
+
         ban_time = get_ban_status(uid)
         if ban_time:
             bot.reply_to(message, f"⚠️ تۆ سزادراویت و ناتوانیت کڕین بکەیت تا بەرواری:\n`{ban_time.strftime('%Y-%m-%d %H:%M:%S')}`", parse_mode='Markdown')
             return
-        send_buy_menu(message)
+        send_buy_menu(message.chat.id)
 
     elif message.text == "💰 قەرزەکانم":
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT usd, iqd, credit_limit FROM debts WHERE user_id = ?', (uid,))
             res = c.fetchone()
-
         if res and res[0] > 0:
             usd, iqd, limit = res
             bot.reply_to(message, f"تۆ بڕی **{usd} دۆلار** قەرزاری ({iqd:,} دینار).\nسنووری قەرزی ڕێگەپێدراوت: **{limit} دۆلار**.", parse_mode='Markdown')
@@ -540,11 +645,10 @@ def handle_text_buttons(message):
             c = conn.cursor()
             c.execute('SELECT card_type, price, code, date FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 5', (uid,))
             hist = c.fetchall()
-
         if hist:
             msg = "📜 **کۆتا کڕینەکانت:**\n\n"
             for ctype, prc, cd, dt in hist:
-                msg += f"💳 کارتی {ctype}$ | {prc:,} د\nکۆد: `{cd}`\nبەروار: {dt}\n------------------\n"
+                msg += f"💳 کارتی {ctype}$ | {prc:,} د\n{cd}\nبەروار: {dt}\n------------------\n"
             bot.reply_to(message, msg, parse_mode='Markdown')
         else:
             bot.reply_to(message, "تۆ هیچ کڕینێکت نەبووە.")
@@ -554,7 +658,6 @@ def handle_text_buttons(message):
             c = conn.cursor()
             c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
             results = c.fetchall()
-
         if results:
             msg = "📦 **ئاماری کارتی بەردەست لە کۆگادا:**\n\n"
             for card_type, count in results:
@@ -563,20 +666,73 @@ def handle_text_buttons(message):
         else:
             bot.reply_to(message, "لە ئێستادا کۆگا بەتاڵە، چاوەڕێی نوێکردنەوە بن. 🌸")
 
+@bot.callback_query_handler(func=lambda call: call.data == 'back_to_buy')
+def back_to_buy_callback(call):
+    if not is_allowed(call.from_user.id): return
+    send_buy_menu(call.message.chat.id, call.message.message_id)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def handle_buy(call):
+def handle_buy_qty_selection(call):
     uid = call.from_user.id
-    if not is_allowed(uid):
-        bot.answer_callback_query(call.id, "ڕێگەپێدراو نیت.", show_alert=True)
+    if not is_allowed(uid): return
+
+    status, reason = get_store_status()
+    if status == "closed":
+        bot.answer_callback_query(call.id, reason, show_alert=True)
+        return
+
+    ctype = call.data.split('_')[1]
+    
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("1 دانە", callback_data=f"confirm_{ctype}_1"),
+        InlineKeyboardButton("2 دانە", callback_data=f"confirm_{ctype}_2")
+    )
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
+    
+    bot.edit_message_text(f"تکایە ژمارەی کارتەکان دیاری بکە بۆ (کارتی {ctype} دۆلاری):", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+
+def get_codes_for_purchase(c, ctype, qty):
+    if ctype != '6':
+        c.execute('SELECT id, code FROM codes WHERE card_type = ? LIMIT ?', (ctype, qty))
+        res = c.fetchall()
+        if len(res) == qty:
+            return res
+        return None
+    else:
+        c.execute('SELECT id, code FROM codes WHERE card_type = "3" LIMIT ?', (qty * 2,))
+        res3 = c.fetchall()
+        if len(res3) == qty * 2:
+            return res3
+        
+        c.execute('SELECT id, code FROM codes WHERE card_type = "4" LIMIT ?', (qty,))
+        res4 = c.fetchall()
+        c.execute('SELECT id, code FROM codes WHERE card_type = "2" LIMIT ?', (qty,))
+        res2 = c.fetchall()
+        if len(res4) == qty and len(res2) == qty:
+            return res4 + res2
+            
+        return None
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_'))
+def handle_confirm_buy(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+
+    status, reason = get_store_status()
+    if status == "closed":
+        bot.answer_callback_query(call.id, reason, show_alert=True)
         return
 
     ban_time = get_ban_status(uid)
     if ban_time:
-        bot.answer_callback_query(call.id, f"تۆ سزادراویت! ناتوانیت کڕین بکەیت تا: {ban_time.strftime('%Y-%m-%d %H:%M')}", show_alert=True)
+        bot.answer_callback_query(call.id, f"تۆ سزادراویت! تا: {ban_time.strftime('%Y-%m-%d %H:%M')}", show_alert=True)
         return
 
+    parts = call.data.split('_')
+    ctype = parts[1]
+    qty = int(parts[2])
     user_name = call.from_user.first_name
-    ctype = call.data.split('_')[1]
 
     with db_lock:
         c = conn.cursor()
@@ -587,7 +743,7 @@ def handle_buy(call):
     current_debt = d_res[0] if d_res else 0
     limit = d_res[1] if d_res else 25
 
-    requested_usd = int(ctype)
+    requested_usd = int(ctype) * qty
     if current_debt + requested_usd > limit:
         bot.answer_callback_query(call.id, f"ناتوانیت! گەیشتووی بە سنووری قەرز ({limit}$).", show_alert=True)
         bot.send_message(uid, f"⚠️ داواکاری کڕینت ڕەتکرایەوە چونکە قەرزەکەت دەگاتە سەروو سنووری ڕێگەپێدراو ({limit}$).")
@@ -595,28 +751,96 @@ def handle_buy(call):
 
     with db_lock:
         c = conn.cursor()
-        c.execute('SELECT id, code FROM codes WHERE card_type = ? LIMIT 1', (ctype,))
-        res = c.fetchone()
+        res_codes = get_codes_for_purchase(c, ctype, qty)
 
-        if res:
-            cid, code = res
-            c.execute('DELETE FROM codes WHERE id = ?', (cid,))
+        if res_codes:
+            for cid, _ in res_codes:
+                c.execute('DELETE FROM codes WHERE id = ?', (cid,))
 
-            prc = prices.get(ctype, 0)
+            prc = prices.get(ctype, 0) * qty
             c.execute('INSERT OR IGNORE INTO debts (user_id, usd, iqd, credit_limit) VALUES (?, 0, 0, 25)', (uid,))
             c.execute('UPDATE debts SET usd = usd + ?, iqd = iqd + ? WHERE user_id = ?', (requested_usd, prc, uid))
-            c.execute('INSERT INTO history (user_id, card_type, price, code) VALUES (?, ?, ?, ?)', (uid, ctype, prc, code))
+            
+            code_str = "\n".join([f"`{code}`" for _, code in res_codes])
+            c.execute('INSERT INTO history (user_id, card_type, price, code) VALUES (?, ?, ?, ?)', (uid, f"{ctype} (x{qty})", prc, code_str))
             conn.commit()
 
-    if res:
+    if res_codes:
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, f"سوپاس! بڕی {prc:,} دینار چووە سەر قەرزەکەت.\n\nکۆدەکەت:\n`{code}`", parse_mode='Markdown')
+        bot.edit_message_text(f"سوپاس! بڕی {prc:,} دینار چووە سەر قەرزەکەت.\n\nکۆدەکانت:\n{code_str}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
 
         username = f"@{call.from_user.username}" if call.from_user.username else "بوونی نییە"
-        admin_msg = f"کەسێک کارتی {ctype}$ی کڕی:\nناو: {user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)"
+        admin_msg = f"کەسێک کارتی کڕی:\nناو: {user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nجۆر و ژمارە: کارتی {ctype}$ ({qty} دانە)\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)"
         bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
     else:
-        bot.answer_callback_query(call.id, f"کارتی {ctype}$ لە کۆگادا نەماوە.", show_alert=True)
+        bot.answer_callback_query(call.id, f"ببورە، کارتی پێویست لە کۆگادا نەماوە بۆ داواکارییەکەت.", show_alert=True)
 
-print("بۆتەکە ئێستا کار دەکات بە سەرکەوتوویی...")
+# ---------------- ئامێری چاودێری کات بۆ سیستەمی تەماتیک ---------------- #
+def auto_schedule_checker():
+    while True:
+        # ڕێکخستنی کات بۆ سەر کاتی کوردستان
+        now = datetime.datetime.utcnow() + datetime.timedelta(hours=3) 
+        current_hm = now.strftime('%H:%M')
+        
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT value FROM settings WHERE key="auto_close_enabled"')
+            res_en = c.fetchone()
+            
+            if res_en and res_en[0] == "1":
+                c.execute('SELECT value FROM settings WHERE key="auto_close_start"')
+                res_start = c.fetchone()
+                c.execute('SELECT value FROM settings WHERE key="auto_close_end"')
+                res_end = c.fetchone()
+                
+                if res_start and res_end:
+                    start_t = res_start[0]
+                    end_t = res_end[0]
+                    
+                    c.execute('SELECT value FROM settings WHERE key="last_auto_trigger"')
+                    last_trigger = c.fetchone()
+                    last_t = last_trigger[0] if last_trigger else ""
+                    trigger_key = f"{now.strftime('%Y-%m-%d')}_{current_hm}"
+                    
+                    # داخرانی ئۆتۆماتیکی
+                    if current_hm == start_t and last_t != trigger_key:
+                        c.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ("last_auto_trigger", ?)', (trigger_key,))
+                        c.execute('SELECT value FROM settings WHERE key="store_status"')
+                        curr_st = c.fetchone()[0]
+                        
+                        if curr_st != "closed":
+                            c.execute('UPDATE settings SET value=? WHERE key="store_status"', ("closed",))
+                            c.execute('UPDATE settings SET value=? WHERE key="close_reason"', (f"فرۆشگا بەشێوەی ئۆتۆماتیکی داخرا لە کاتژمێر {start_t} تا {end_t}.",))
+                            c.execute('SELECT user_id FROM allowed_users')
+                            users = c.fetchall()
+                            conn.commit()
+                            for (uid,) in users:
+                                try: bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگاوە:**\n\n🔒 فرۆشگا داخرا.\nئەمە سیستەمی داخستنی ئۆتۆماتیکییە تا کاتژمێر {end_t}.", parse_mode='Markdown')
+                                except: pass
+                        else:
+                            conn.commit()
+                            
+                    # کرانەوەی ئۆتۆماتیکی
+                    elif current_hm == end_t and last_t != trigger_key:
+                        c.execute('INSERT OR REPLACE INTO settings (key, value) VALUES ("last_auto_trigger", ?)', (trigger_key,))
+                        c.execute('SELECT value FROM settings WHERE key="store_status"')
+                        curr_st = c.fetchone()[0]
+                        
+                        if curr_st != "open":
+                            c.execute('UPDATE settings SET value=? WHERE key="store_status"', ("open",))
+                            c.execute('SELECT user_id FROM allowed_users')
+                            users = c.fetchall()
+                            conn.commit()
+                            for (uid,) in users:
+                                try: bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگاوە:**\n\n🔓 فرۆشگاکە ئێستا کرایەوە! 🍏\nدەتوانن کڕینەکانتان ئەنجام بدەن.", parse_mode='Markdown')
+                                except: pass
+                        else:
+                            conn.commit()
+        time.sleep(30) # هەموو ٣٠ چرکە جارێک کاتەکە دەپشکنێت
+
+# خستنە کاری سیستەمی چاودێری لە باکگراوند
+checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
+checker_thread.start()
+
+print("بۆتەکە ئێستا کار دەکات لەگەڵ سیستەمی تەماتیکی کرانەوە و داخستن...")
 bot.infinity_polling()
