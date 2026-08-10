@@ -132,11 +132,6 @@ def get_main_menu(user_id):
 def send_welcome(message):
     user_id = message.from_user.id
     if is_allowed(user_id):
-        with db_lock:
-            c = conn.cursor()
-            c.execute('UPDATE allowed_users SET name = ? WHERE user_id = ?', (message.from_user.first_name, user_id))
-            conn.commit()
-        
         welcome_text = (
             "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس. 🍏\n\n"
             "ئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت.\n\n"
@@ -265,6 +260,21 @@ def remove_user(message):
             bot.reply_to(message, f"کڕیار بە ئایدی {target_id} لە فرۆشگاکە لادرا.")
         except:
             bot.reply_to(message, "شێواز هەڵەیە: /remove 987654321")
+
+@bot.message_handler(commands=['setname'])
+def set_user_name(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            parts = message.text.split(maxsplit=2)
+            target_id = int(parts[1])
+            new_name = parts[2]
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE allowed_users SET name = ? WHERE user_id = ?', (new_name, target_id))
+                conn.commit()
+            bot.reply_to(message, f"✅ ناوی کڕیار بە ئایدی {target_id} گۆڕدرا بۆ: **{new_name}**", parse_mode='Markdown')
+        except:
+            bot.reply_to(message, "شێواز هەڵەیە. نموونە:\n`/setname 123456789 هێمن`", parse_mode='Markdown')
 
 @bot.message_handler(commands=['ban'])
 def ban_user(message):
@@ -597,7 +607,6 @@ def broadcast(message):
         else:
             bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
 
-# ---------------- بەشی باکئەپ (وەرگرتنی داتابەیس) ---------------- #
 @bot.message_handler(commands=['backup'])
 def send_backup(message):
     if message.chat.id == ADMIN_ID:
@@ -611,8 +620,6 @@ def send_backup(message):
                 )
         except Exception as e:
             bot.reply_to(message, f"کێشەیەک هەیە لە ناردنی فایلەکە: {e}")
-
-# --------------------------------------------------------------- #
 
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
@@ -744,11 +751,14 @@ def handle_confirm_buy(call):
     parts = call.data.split('_')
     ctype = parts[1]
     qty = int(parts[2])
-    user_name = call.from_user.first_name
+    user_tg_name = call.from_user.first_name
 
     with db_lock:
         c = conn.cursor()
-        c.execute('UPDATE allowed_users SET name = ? WHERE user_id = ?', (user_name, uid))
+        c.execute('SELECT name FROM allowed_users WHERE user_id = ?', (uid,))
+        n_res = c.fetchone()
+        db_user_name = n_res[0] if n_res and n_res[0] else user_tg_name
+        
         c.execute('SELECT usd, credit_limit FROM debts WHERE user_id = ?', (uid,))
         d_res = c.fetchone()
 
@@ -782,12 +792,11 @@ def handle_confirm_buy(call):
         bot.edit_message_text(f"سوپاس! بڕی {prc:,} دینار چووە سەر قەرزەکەت.\n\nکۆدەکانت:\n{code_str}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
 
         username = f"@{call.from_user.username}" if call.from_user.username else "بوونی نییە"
-        admin_msg = f"کەسێک کارتی کڕی:\nناو: {user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nجۆر و ژمارە: کارتی {ctype}$ ({qty} دانە)\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)"
+        admin_msg = f"کەسێک کارتی کڕی:\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nجۆر و ژمارە: کارتی {ctype}$ ({qty} دانە)\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)"
         bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
     else:
         bot.answer_callback_query(call.id, f"ببورە، کارتی پێویست لە کۆگادا نەماوە بۆ داواکارییەکەت.", show_alert=True)
 
-# ---------------- ڕێکخستنی مێنیوی تایبەت ---------------- #
 def setup_bot_commands():
     user_commands = [
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
@@ -801,6 +810,7 @@ def setup_bot_commands():
         BotCommand("contact", "📞 پەیوەندیکردن"),
         BotCommand("allow", "✅ ڕێگەپێدان بە کڕیار"),
         BotCommand("remove", "❌ سڕینەوەی کڕیار"),
+        BotCommand("setname", "✏️ گۆڕینی ناوی کڕیار"),
         BotCommand("ban", "🚫 سزادانی کڕیار"),
         BotCommand("unban", "♻️ لابردنی سزا"),
         BotCommand("users", "👥 لیستی کڕیارەکان"),
