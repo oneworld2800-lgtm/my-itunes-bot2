@@ -626,9 +626,9 @@ def restore_instructions(message):
     if message.chat.id == ADMIN_ID:
         bot.reply_to(message, "بۆ گەڕاندنەوەی زانیارییەکان (Restore)، تکایە تەنها ئەو فایلە باکئەپەی کە پێشتر وەرتگرتووە (`itunes_store_v5.db`) ڕاستەوخۆ بنێرە بۆ ئێرە و بۆتەکە خۆی دەیخوێنێتەوە.")
 
-# ---------------- بەشی گەڕاندنەوەی فایل (Restore) ---------------- #
 @bot.message_handler(content_types=['document'])
 def handle_database_restore(message):
+    global conn
     if message.chat.id == ADMIN_ID:
         if message.document.file_name.endswith('.db'):
             try:
@@ -637,20 +637,14 @@ def handle_database_restore(message):
                 downloaded_file = bot.download_file(file_info.file_path)
                 
                 with db_lock:
-                    global conn
-                    # داخستنی پەیوەندییە کۆنەکە
                     conn.close()
-                    # نووسینەوەی فایلی نوێ لەسەر فایلە کۆنەکە
                     with open('itunes_store_v5.db', 'wb') as new_file:
                         new_file.write(downloaded_file)
-                    # دروستکردنەوەی پەیوەندی لەگەڵ داتابەیسە نوێیەکە
                     conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
                 
                 bot.reply_to(message, "✅ داتابەیسەکە بە سەرکەوتوویی گەڕێندرایەوە (Restore). هەموو کۆدەکان، قەرزەکان و کڕیارەکان گەڕانەوە شوێنی خۆیان!")
             except Exception as e:
                 bot.reply_to(message, f"❌ کێشەیەک ڕوویدا لە کاتی گەڕاندنەوەدا: {e}")
-                # ئەگەر کێشەیەکیش دروست بوو با پەیوەندییەکە بگەڕێتەوە کار
-                global conn
                 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
         else:
             bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
