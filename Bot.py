@@ -597,6 +597,23 @@ def broadcast(message):
         else:
             bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
 
+# ---------------- بەشی باکئەپ (وەرگرتنی داتابەیس) ---------------- #
+@bot.message_handler(commands=['backup'])
+def send_backup(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            with open('itunes_store_v5.db', 'rb') as doc:
+                bot.send_document(
+                    message.chat.id, 
+                    doc, 
+                    caption="💾 **ئەمە فایلی داتابەیسەکەتە (باکئەپ).**\n\nتەواوی کۆدەکان، قەرزەکان، و کڕیارەکانی تێدایە. دەتوانیت ئەم فایلە لای خۆت بپارێزیت.",
+                    parse_mode='Markdown'
+                )
+        except Exception as e:
+            bot.reply_to(message, f"کێشەیەک هەیە لە ناردنی فایلەکە: {e}")
+
+# --------------------------------------------------------------- #
+
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
     for ctype, price in prices.items():
@@ -797,13 +814,12 @@ def setup_bot_commands():
         BotCommand("debts", "📒 دەفتەری قەرزەکان"),
         BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
         BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
-        BotCommand("broadcast", "📢 ناردنی ئاگاداری")
+        BotCommand("broadcast", "📢 ناردنی ئاگاداری"),
+        BotCommand("backup", "💾 وەرگرتنی باکئەپ (فایل)")
     ]
     
     try:
-        # دانانی فەرمانە ئاساییەکان بۆ هەموو خەڵک
         bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-        # دانانی فەرمانە زۆرەکان تەنها بۆ ئەدمین (هیلال)
         bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
     except Exception as e:
         print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
