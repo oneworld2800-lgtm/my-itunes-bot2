@@ -820,7 +820,7 @@ def handle_confirm_buy(call):
         bot.edit_message_text(f"سوپاس! بڕی {prc:,} دینار چووە سەر قەرزەکەت.\n\nکۆدەکانت:\n{code_str}", chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
 
         username = f"@{call.from_user.username}" if call.from_user.username else "بوونی نییە"
-        admin_msg = f"کەسێک کارتی کڕی:\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nجۆر و ژمارە: کارتی {ctype}$ ({qty} دانە)\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)"
+        admin_msg = f"کەسێک کارتی کڕی:\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nجۆر و ژمارە: کارتی {ctype}$ ({qty} دانە)\n(بڕی {prc:,} دینار / {requested_usd}$ چووە سەر قەرزەکانی)\n\nکۆدەکان:\n{code_str}"
         bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
     else:
         bot.answer_callback_query(call.id, f"ببورە، کارتی پێویست لە کۆگادا نەماوە بۆ داواکارییەکەت.", show_alert=True)
