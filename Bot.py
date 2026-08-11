@@ -164,7 +164,7 @@ def forward_to_admin(message):
     bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
-# ------------- فەرمانەکانی ئەدمین (لابراوە بۆ کورتی لێرەدا، وەک خۆی هێشتومەتەوە) -------------
+# ------------- فەرمانەکانی ئەدمین -------------
 @bot.message_handler(commands=['autoclose'])
 def set_autoclose(message):
     if message.chat.id == ADMIN_ID:
@@ -556,6 +556,27 @@ def broadcast(message):
             bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
         else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
 
+# ----------------- فەرمانی ڕاگەیاندنی نوێکاری -----------------
+@bot.message_handler(commands=['update'])
+def announce_update(message):
+    if message.chat.id == ADMIN_ID:
+        text = message.text.replace('/update', '').strip()
+        if text:
+            with db_lock:
+                c = conn.cursor()
+                c.execute('SELECT user_id FROM allowed_users')
+                users = c.fetchall()
+            count = 0
+            for (uid,) in users:
+                try:
+                    update_msg = f"✨ **نوێکاری لە فرۆشگا!** ✨\n\n{text}"
+                    bot.send_message(uid, update_msg, parse_mode='Markdown')
+                    count += 1
+                except: pass
+            bot.reply_to(message, f"✅ نامەی نوێکاری بە سەرکەوتوویی بۆ {count} کڕیار نێردرا.")
+        else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە. نموونە:\n`/update سەبەتەی کڕین بۆ فرۆشگاکەمان زیاد کرا!`", parse_mode='Markdown')
+# -----------------------------------------------------------------
+
 @bot.message_handler(commands=['backup'])
 def send_backup(message):
     if message.chat.id == ADMIN_ID:
@@ -678,13 +699,11 @@ def handle_buy_qty_selection(call):
         return
 
     ctype = call.data.split('_')[1]
-    markup = InlineKeyboardMarkup(row_width=3)
+    markup = InlineKeyboardMarkup(row_width=2)
+    # سنووری کڕین گەڕێنرایەوە بۆ تەنها ١ یان ٢ دانە
     markup.add(
-        InlineKeyboardButton("1", callback_data=f"addcart_{ctype}_1"),
-        InlineKeyboardButton("2", callback_data=f"addcart_{ctype}_2"),
-        InlineKeyboardButton("3", callback_data=f"addcart_{ctype}_3"),
-        InlineKeyboardButton("4", callback_data=f"addcart_{ctype}_4"),
-        InlineKeyboardButton("5", callback_data=f"addcart_{ctype}_5")
+        InlineKeyboardButton("1 دانە", callback_data=f"addcart_{ctype}_1"),
+        InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
     )
     markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
     
@@ -843,7 +862,8 @@ def handle_checkout(call):
         code_texts = []
         for cid, code, ctype in all_assigned_codes:
             c.execute('DELETE FROM codes WHERE id = ?', (cid,))
-            code_texts.append(f"💳 {ctype}$: `{code}`")
+            # لێرەدا کۆدەکان جیاکراونەتەوە لە مێژووشدا
+            code_texts.append(f"▫️ کارتی {ctype}$: `{code}`")
 
         c.execute('INSERT OR IGNORE INTO debts (user_id, usd, iqd, credit_limit) VALUES (?, 0, 0, 25)', (uid,))
         c.execute('UPDATE debts SET usd = usd + ?, iqd = iqd + ? WHERE user_id = ?', (total_usd, total_iqd, uid))
@@ -853,7 +873,7 @@ def handle_checkout(call):
         c.execute('INSERT INTO history (user_id, card_type, price, code) VALUES (?, ?, ?, ?)', (uid, history_desc, total_iqd, history_codes))
         conn.commit()
 
-    # دروستکردنی پسوڵەی دیجیتاڵی (Receipt)
+    # دروستکردنی پسوڵەی دیجیتاڵی (Receipt) بە چارەسەرکراوی
     receipt = (
         "🧾 **پسوڵەی کڕین (ڕەسمی)**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -873,10 +893,13 @@ def handle_checkout(call):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🎁 **کۆدەکان:** (بۆ کۆپیکردن کرتە لە کۆدەکە بکە)\n\n"
     )
-    for cid, code, ct in all_assigned_codes:
-         receipt += f" `{code}`\n"
     
-    receipt += "\nزۆر سوپاس بۆ متمانەت! 🍏 مابەست باربەر"
+    # لێرەدا کۆدەکان بە جوانی جیا دەکرێنەوە بۆ کڕیار
+    for cid, code, ct in all_assigned_codes:
+         receipt += f" ▫️ کارتی {ct}$: `{code}`\n"
+    
+    # لێرەدا ناوەکە بەتەواوی چاککراوە بۆ هیلال
+    receipt += "\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
 
     # بەتاڵکردنەوەی سەبەتە
     user_carts.pop(uid, None)
@@ -916,6 +939,7 @@ def setup_bot_commands():
         BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
         BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
         BotCommand("broadcast", "📢 ناردنی ئاگاداری"),
+        BotCommand("update", "✨ ڕاگەیاندنی نوێکاری"),
         BotCommand("backup", "💾 وەرگرتنی باکئەپ (فایل)"),
         BotCommand("restore", "🔄 گەڕاندنەوەی باکئەپ")
     ]
