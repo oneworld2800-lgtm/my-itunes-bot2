@@ -14,7 +14,6 @@ bot.remove_webhook()
 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
 db_lock = threading.Lock()
 
-# سەبەتەی کڕینی کڕیارەکان
 user_carts = {}
 
 def init_db():
@@ -556,7 +555,6 @@ def broadcast(message):
             bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
         else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
 
-# ----------------- فەرمانی ڕاگەیاندنی نوێکاری -----------------
 @bot.message_handler(commands=['update'])
 def announce_update(message):
     if message.chat.id == ADMIN_ID:
@@ -575,7 +573,6 @@ def announce_update(message):
                 except: pass
             bot.reply_to(message, f"✅ نامەی نوێکاری بە سەرکەوتوویی بۆ {count} کڕیار نێردرا.")
         else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە. نموونە:\n`/update سەبەتەی کڕین بۆ فرۆشگاکەمان زیاد کرا!`", parse_mode='Markdown')
-# -----------------------------------------------------------------
 
 @bot.message_handler(commands=['backup'])
 def send_backup(message):
@@ -608,23 +605,22 @@ def handle_database_restore(message):
                 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
         else: bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
 
-# ================== سیستەمی کڕین و سەبەتە (Shopping Cart & Receipt) ==================
+# ================== سیستەمی دوو-دوگمەیی سەرەکی (2 Main Buttons Flow) ==================
 
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
     for ctype, price in prices.items():
         markup.add(InlineKeyboardButton(f"{ctype} دۆلاری - {price:,} دینار", callback_data=f"buy_{ctype}"))
     
-    # ئەگەر سەبەتەی کڕیارەکە شتی تێدا بوو، دوگمەی سەبەتەی بۆ زیاد بکە
     cart = user_carts.get(chat_id, {})
     if cart:
         total_items = sum(cart.values())
         markup.add(
-            InlineKeyboardButton(f"🛒 سەبەتەکەم ({total_items} کاڵا)", callback_data="viewcart"),
+            InlineKeyboardButton(f"🛒 بینینی سەبەتەکەم ({total_items} کاڵا)", callback_data="viewcart"),
             InlineKeyboardButton("🗑 بەتاڵکردنەوەی سەبەتە", callback_data="emptycart")
         )
         
-    text = "تکایە جۆری کارت هەڵبژێرە یان سەیری سەبەتەکەت بکە:"
+    text = "تکایە جۆری کارت هەڵبژێرە:"
     if message_id:
         bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
     else:
@@ -688,8 +684,9 @@ def back_to_buy_callback(call):
     if not is_allowed(call.from_user.id): return
     send_buy_menu(call.message.chat.id, call.message.message_id)
 
+# هەنگاوی یەکەم: نیشاندانی تەنها دوو دوگمەی سەرەکی
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def handle_buy_qty_selection(call):
+def handle_buy_mode_selection(call):
     uid = call.from_user.id
     if not is_allowed(uid): return
 
@@ -699,15 +696,39 @@ def handle_buy_qty_selection(call):
         return
 
     ctype = call.data.split('_')[1]
+    
+    markup = InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        InlineKeyboardButton("⚡ کڕینی خێرا", callback_data=f"mode_quick_{ctype}"),
+        InlineKeyboardButton("🛒 خستنە سەبەتە", callback_data=f"mode_cart_{ctype}"),
+        InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy")
+    )
+    
+    bot.edit_message_text(f"💳 **کارتی {ctype} دۆلاری**\n\nتکایە شێوازی کڕین هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+
+# هەنگاوی دووەم (A): ئەگەر "کڕینی خێرا"ی هەڵبژارد
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mode_quick_'))
+def handle_mode_quick(call):
+    ctype = call.data.split('_')[2]
     markup = InlineKeyboardMarkup(row_width=2)
-    # سنووری کڕین گەڕێنرایەوە بۆ تەنها ١ یان ٢ دانە
+    markup.add(
+        InlineKeyboardButton("1 دانە", callback_data=f"quickbuy_{ctype}_1"),
+        InlineKeyboardButton("2 دانە", callback_data=f"quickbuy_{ctype}_2"),
+        InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}")
+    )
+    bot.edit_message_text(f"⚡ **کڕینی خێرا (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+
+# هەنگاوی دووەم (B): ئەگەر "خستنە سەبەتە"ی هەڵبژارد
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mode_cart_'))
+def handle_mode_cart(call):
+    ctype = call.data.split('_')[2]
+    markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("1 دانە", callback_data=f"addcart_{ctype}_1"),
-        InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
+        InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2"),
+        InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}")
     )
-    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
-    
-    bot.edit_message_text(f"تکایە ژمارەی کارتەکان دیاری بکە بۆ (کارتی {ctype} دۆلاری):", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    bot.edit_message_text(f"🛒 **خستنە سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('addcart_'))
 def handle_add_cart(call):
@@ -721,14 +742,17 @@ def handle_add_cart(call):
     if uid not in user_carts:
         user_carts[uid] = {}
     
-    user_carts[uid][ctype] = user_carts[uid].get(ctype, 0) + qty
-
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("🛍 بینینی سەبەتە و کڕین", callback_data="viewcart"),
-        InlineKeyboardButton("➕ بەردەوامبوون لە کڕین", callback_data="back_to_buy")
-    )
-    bot.edit_message_text(f"✅ ژمارە {qty} کارتی {ctype}$ خرایە سەبەتەکەتەوە.\nدەتەوێت چی بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    current_in_cart = user_carts[uid].get(ctype, 0)
+    
+    if current_in_cart + qty > 2:
+        bot.answer_callback_query(call.id, "⚠️ ناتوانیت لە ٢ دانە زیاتر لە یەک جۆری کارت بخەیتە سەبەتەوە!", show_alert=True)
+        return
+        
+    user_carts[uid][ctype] = current_in_cart + qty
+    bot.answer_callback_query(call.id, f"✅ {qty} کارتی {ctype}$ خرایە سەبەتەکەتەوە!")
+    
+    call.data = 'viewcart'
+    handle_view_cart(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'emptycart')
 def handle_empty_cart(call):
@@ -761,9 +785,9 @@ def handle_view_cart(call):
     text += f"\n💰 **کۆی گشتی:** {total_usd}$ ({total_iqd:,} دینار)"
     
     markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(InlineKeyboardButton("✅ پشتڕاستکردنەوە و کڕین", callback_data="checkout"))
+    markup.add(InlineKeyboardButton("✅ پشتڕاستکردنەوە و کڕینی سەبەتە", callback_data="checkout"))
+    markup.add(InlineKeyboardButton("➕ زیادکردنی کارتی تر بۆ سەبەتە", callback_data="back_to_buy"))
     markup.add(InlineKeyboardButton("🗑 بەتاڵکردنەوە", callback_data="emptycart"))
-    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
     
     bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown', reply_markup=markup)
 
@@ -793,11 +817,7 @@ def get_codes_for_purchase(c, ctype, qty, used_ids):
             return res4 + res2
         return None
 
-@bot.callback_query_handler(func=lambda call: call.data == 'checkout')
-def handle_checkout(call):
-    uid = call.from_user.id
-    if not is_allowed(uid): return
-
+def process_checkout(call, uid, cart_dict, is_quickbuy=False):
     status, reason = get_store_status()
     if status == "closed":
         bot.answer_callback_query(call.id, reason, show_alert=True)
@@ -808,14 +828,9 @@ def handle_checkout(call):
         bot.answer_callback_query(call.id, f"تۆ سزادراویت! تا: {ban_time.strftime('%Y-%m-%d %H:%M')}", show_alert=True)
         return
 
-    cart = user_carts.get(uid, {})
-    if not cart:
-        bot.answer_callback_query(call.id, "سەبەتەکەت بەتاڵە!", show_alert=True)
-        return
-
     total_usd = 0
     total_iqd = 0
-    for ctype, qty in cart.items():
+    for ctype, qty in cart_dict.items():
         total_usd += int(ctype) * qty
         total_iqd += prices.get(ctype, 0) * qty
 
@@ -844,8 +859,7 @@ def handle_checkout(call):
         used_ids = set()
         can_fulfill = True
         
-        # پشکنینی هەموو کۆدەکان پێش کڕین
-        for ctype, qty in cart.items():
+        for ctype, qty in cart_dict.items():
             res = get_codes_for_purchase(c, ctype, qty, used_ids)
             if not res:
                 can_fulfill = False
@@ -858,22 +872,19 @@ def handle_checkout(call):
             bot.answer_callback_query(call.id, "ببورە، کارتی پێویست لە کۆگادا نەماوە بۆ داواکارییەکەت.", show_alert=True)
             return
 
-        # ئەگەر هەمووی هەبوو، سڕینەوە و وەرگرتنی قەرز
         code_texts = []
         for cid, code, ctype in all_assigned_codes:
             c.execute('DELETE FROM codes WHERE id = ?', (cid,))
-            # لێرەدا کۆدەکان جیاکراونەتەوە لە مێژووشدا
             code_texts.append(f"▫️ کارتی {ctype}$: `{code}`")
 
         c.execute('INSERT OR IGNORE INTO debts (user_id, usd, iqd, credit_limit) VALUES (?, 0, 0, 25)', (uid,))
         c.execute('UPDATE debts SET usd = usd + ?, iqd = iqd + ? WHERE user_id = ?', (total_usd, total_iqd, uid))
         
-        history_desc = ", ".join([f"{ct}$ (x{q})" for ct, q in cart.items()])
+        history_desc = ", ".join([f"{ct}$ (x{q})" for ct, q in cart_dict.items()])
         history_codes = "\n".join(code_texts)
         c.execute('INSERT INTO history (user_id, card_type, price, code) VALUES (?, ?, ?, ?)', (uid, history_desc, total_iqd, history_codes))
         conn.commit()
 
-    # دروستکردنی پسوڵەی دیجیتاڵی (Receipt) بە چارەسەرکراوی
     receipt = (
         "🧾 **پسوڵەی کڕین (ڕەسمی)**\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -882,7 +893,7 @@ def handle_checkout(call):
         "━━━━━━━━━━━━━━━━━━━━\n"
         "🛒 **کاڵاکان:**\n"
     )
-    for ct, q in cart.items():
+    for ct, q in cart_dict.items():
         receipt += f"▫️ {q}x کارتی {ct}$ = {prices.get(ct,0)*q:,} دینار\n"
     
     receipt += (
@@ -894,22 +905,40 @@ def handle_checkout(call):
         "🎁 **کۆدەکان:** (بۆ کۆپیکردن کرتە لە کۆدەکە بکە)\n\n"
     )
     
-    # لێرەدا کۆدەکان بە جوانی جیا دەکرێنەوە بۆ کڕیار
     for cid, code, ct in all_assigned_codes:
          receipt += f" ▫️ کارتی {ct}$: `{code}`\n"
     
-    # لێرەدا ناوەکە بەتەواوی چاککراوە بۆ هیلال
     receipt += "\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
 
-    # بەتاڵکردنەوەی سەبەتە
-    user_carts.pop(uid, None)
+    if not is_quickbuy:
+        user_carts.pop(uid, None)
     
-    bot.answer_callback_query(call.id)
+    bot.answer_callback_query(call.id, "کڕینەکەت سەرکەوتوو بوو! ✅")
     bot.edit_message_text(receipt, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
 
     username = f"@{call.from_user.username}" if call.from_user.username else "بوونی نییە"
-    admin_msg = f"🛒 **کڕینێکی نوێ لە سەبەتەوە ئەنجامدرا!**\n\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nکڕیارەکە ئەمەی کڕی: {history_desc}\n\n{receipt}"
+    admin_msg = f"🛒 **کڕینێکی نوێ ئەنجامدرا!**\n\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nکڕیارەکە ئەمەی کڕی: {history_desc}\n\n{receipt}"
     bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('quickbuy_'))
+def handle_quickbuy(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    parts = call.data.split('_')
+    ctype = parts[1]
+    qty = int(parts[2])
+    cart_dict = {ctype: qty}
+    process_checkout(call, uid, cart_dict, is_quickbuy=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'checkout')
+def handle_checkout_cart(call):
+    uid = call.from_user.id
+    if not is_allowed(uid): return
+    cart_dict = user_carts.get(uid, {})
+    if not cart_dict:
+        bot.answer_callback_query(call.id, "سەبەتەکەت بەتاڵە!", show_alert=True)
+        return
+    process_checkout(call, uid, cart_dict, is_quickbuy=False)
 
 def setup_bot_commands():
     user_commands = [
