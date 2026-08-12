@@ -605,7 +605,7 @@ def handle_database_restore(message):
                 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
         else: bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
 
-# ================== سیستەمی دوو-دوگمەیی سەرەکی (2 Main Buttons Flow) ==================
+# ================== سیستەمی زیرەکی کڕین (Smart Cart) ==================
 
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
@@ -684,7 +684,6 @@ def back_to_buy_callback(call):
     if not is_allowed(call.from_user.id): return
     send_buy_menu(call.message.chat.id, call.message.message_id)
 
-# هەنگاوی یەکەم: نیشاندانی تەنها دوو دوگمەی سەرەکی
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
 def handle_buy_mode_selection(call):
     uid = call.from_user.id
@@ -696,38 +695,46 @@ def handle_buy_mode_selection(call):
         return
 
     ctype = call.data.split('_')[1]
+    cart = user_carts.get(uid, {})
     
-    markup = InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        InlineKeyboardButton("⚡ کڕینی خێرا", callback_data=f"mode_quick_{ctype}"),
-        InlineKeyboardButton("🛒 خستنە سەبەتە", callback_data=f"mode_cart_{ctype}"),
-        InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy")
-    )
-    
-    bot.edit_message_text(f"💳 **کارتی {ctype} دۆلاری**\n\nتکایە شێوازی کڕین هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    # لێرەدایە زیرەکییەکە: ئەگەر سەبەتەکە شتی تێدابێت ڕاستەوخۆ دەبێتە خستنە سەبەتە!
+    if cart:
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("1 دانە", callback_data=f"addcart_{ctype}_1"),
+            InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
+        )
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
+        bot.edit_message_text(f"🛒 **زیادکردن بۆ سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    else:
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(
+            InlineKeyboardButton("⚡ کڕینی خێرا", callback_data=f"mode_quick_{ctype}"),
+            InlineKeyboardButton("🛒 خستنە سەبەتە", callback_data=f"mode_cart_{ctype}"),
+            InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy")
+        )
+        bot.edit_message_text(f"💳 **کارتی {ctype} دۆلاری**\n\nتکایە شێوازی کڕین هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
-# هەنگاوی دووەم (A): ئەگەر "کڕینی خێرا"ی هەڵبژارد
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_quick_'))
 def handle_mode_quick(call):
     ctype = call.data.split('_')[2]
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("1 دانە", callback_data=f"quickbuy_{ctype}_1"),
-        InlineKeyboardButton("2 دانە", callback_data=f"quickbuy_{ctype}_2"),
-        InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}")
+        InlineKeyboardButton("2 دانە", callback_data=f"quickbuy_{ctype}_2")
     )
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}"))
     bot.edit_message_text(f"⚡ **کڕینی خێرا (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
-# هەنگاوی دووەم (B): ئەگەر "خستنە سەبەتە"ی هەڵبژارد
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_cart_'))
 def handle_mode_cart(call):
     ctype = call.data.split('_')[2]
     markup = InlineKeyboardMarkup(row_width=2)
     markup.add(
         InlineKeyboardButton("1 دانە", callback_data=f"addcart_{ctype}_1"),
-        InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2"),
-        InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}")
+        InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
     )
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}"))
     bot.edit_message_text(f"🛒 **خستنە سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('addcart_'))
