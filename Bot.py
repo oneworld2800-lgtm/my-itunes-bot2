@@ -15,7 +15,7 @@ conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
 db_lock = threading.Lock()
 
 user_carts = {}
-pending_refunds = {}  # بۆ هەڵگرتنی زانیاری گەڕاندنەوەکان بۆ ماوەی ٣٠ چرکە
+pending_refunds = {}
 
 def init_db():
     with db_lock:
@@ -164,7 +164,6 @@ def forward_to_admin(message):
     bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
-# ------------- فەرمانەکانی ئەدمین -------------
 @bot.message_handler(commands=['autoclose'])
 def set_autoclose(message):
     if message.chat.id == ADMIN_ID:
@@ -326,7 +325,6 @@ def list_users(message):
         else:
             bot.reply_to(message, "هیچ بەکارهێنەرێکی ڕێگەپێدراو نییە.")
 
-# ================== سیستەمی نوێی بەڕێوەبردنی قەرزەکان بە دوگمە ==================
 @bot.message_handler(commands=['editdebt'])
 def editdebt_command(message):
     if message.chat.id == ADMIN_ID:
@@ -449,8 +447,6 @@ def mdebt_do_action(call):
             markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
 
             bot.edit_message_text(msg_admin + "\n\nدەتەوێت کارێکی تر بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-
-# =========================================================================
 
 @bot.message_handler(commands=['add'])
 def add_codes(message):
@@ -659,8 +655,6 @@ def handle_database_restore(message):
                 bot.reply_to(message, f"❌ کێشەیەک ڕوویدا لە کاتی گەڕاندنەوەدا: {e}")
                 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
         else: bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
-
-# ================== سیستەمی زیرەکی کڕین (Smart Cart & Refund) ==================
 
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
@@ -976,14 +970,13 @@ def process_checkout(call, uid, cart_dict, is_quickbuy=False):
     
     bot.answer_callback_query(call.id, "کڕینەکەت سەرکەوتوو بوو! ✅")
     
-    # ------------------ دروستکردنی دوگمەی گەڕاندنەوە ------------------
     receipt_id = str(int(time.time())) + "_" + str(uid)
     pending_refunds[receipt_id] = {
         'uid': uid,
         'codes': all_assigned_codes,
         'total_usd': total_usd,
         'total_iqd': total_iqd,
-        'expiry': time.time() + 30, # 30 seconds
+        'expiry': time.time() + 30,
         'history_desc': history_desc,
         'db_user_name': db_user_name
     }
@@ -1017,7 +1010,7 @@ def handle_checkout_cart(call):
         return
     process_checkout(call, uid, cart_dict, is_quickbuy=False)
 
-# ================== سیستەمی وەرگرتنەوەی کارت لەلایەن کڕیارەوە (Refund) ==================
+# ================== چاککردنی کێشەی دەرکەوتنی کۆدەکان لە کاتی گەڕاندنەوەدا ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('refund_'))
 def handle_refund_request(call):
     receipt_id = call.data.split('_')[1] + "_" + call.data.split('_')[2]
@@ -1030,7 +1023,6 @@ def handle_refund_request(call):
         
     refund_data = pending_refunds[receipt_id]
     
-    # پشکنینی ٣٠ چرکەکە
     if time.time() > refund_data['expiry']:
         bot.answer_callback_query(call.id, "کاتەکەت تەواو بووە (٣٠ چرکە تێپەڕیوە)، ناتوانیت بیگەڕێنیتەوە!", show_alert=True)
         del pending_refunds[receipt_id]
@@ -1049,15 +1041,12 @@ def handle_refund_request(call):
         c = conn.cursor()
         code_texts_for_admin = []
         
-        # 1. گەڕاندنەوەی کارتەکان بۆ کۆگاکانی خۆیان بە دروستی
         for cid, code, ctype in codes_to_return:
             c.execute('INSERT INTO codes (card_type, code) VALUES (?, ?)', (ctype, code))
             code_texts_for_admin.append(f"▫️ کارتی {ctype}$: `{code}`")
             
-        # 2. کەمکردنەوەی قەرزەکەی کە خرابووە سەری
         c.execute('UPDATE debts SET usd = usd - ?, iqd = iqd - ? WHERE user_id = ?', (refund_usd, refund_iqd, uid))
         
-        # 3. تۆمارکردنی گەڕاندنەوەکە لە مێژوودا
         c.execute('INSERT INTO history (user_id, card_type, price, code) VALUES (?, ?, ?, ?)', (uid, f"گەڕاندنەوە: {desc}", -refund_iqd, "کۆدەکان گەڕێندرانەوە ناو کۆگا"))
         conn.commit()
         
@@ -1065,11 +1054,20 @@ def handle_refund_request(call):
     
     bot.answer_callback_query(call.id, "کڕینەکە هەڵوەشایەوە و کۆدەکان گەڕێندرانەوە! ✅", show_alert=True)
     
-    # گۆڕینی پسوڵەکەی کڕیار بۆ ئەوەی بزانێت گەڕێندراوەتەوە
-    new_text = call.message.text + "\n\n❌ **ئەم کڕینە لەلایەن کڕیارەوە هەڵوەشایەوە و پارەکە لە قەرزەکەی سڕایەوە.**"
+    # چارەسەرە گرنگەکە: لێرەدا تەواوی نامە کۆنەکە دەسڕدرێتەوە و ئەم نامە نوێیە جێگەی دەگرێتەوە بۆ ئەوەی کۆدەکان بەتەواوی بشاردرێنەوە
+    new_text = (
+        "🧾 **پسوڵەی هەڵوەشاوە** ❌\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        f"ئەم کڕینە بە سەرکەوتوویی هەڵوەشایەوە.\n\n"
+        f"کڕیار: {u_name}\n"
+        f"بڕی گەڕێندراو: {desc}\n"
+        f"پارەی سڕاوە لە قەرز: {refund_usd}$ ({refund_iqd:,} دینار)\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🔒 **کۆدەکان شاردرانەوە و گەڕێندرانەوە بۆ ناو کۆگا.**\n"
+        "هیچ بڕە پارەیەک بۆ ئەم پسوڵەیە نەچووەتە سەر قەرزەکانت."
+    )
     bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
     
-    # ناردنی نامەی ئاگاداری بۆ ئەدمین (هیلال)
     codes_str = "\n".join(code_texts_for_admin)
     admin_msg = (
         "⚠️ **ئاگاداری: گەڕاندنەوەی کارت!**\n\n"
@@ -1128,7 +1126,6 @@ def auto_schedule_checker():
         current_hm = now.strftime('%H:%M')
         now_time = time.time()
         
-        # پاککردنەوەی ئەو گەڕاندنەوانەی کە کاتیان بەسەر چووە (بۆ سووککردنی مێمۆری)
         to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
         for rid in to_delete:
             del pending_refunds[rid]
