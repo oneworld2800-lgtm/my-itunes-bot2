@@ -164,6 +164,7 @@ def forward_to_admin(message):
     bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
+# ------------- فەرمانەکانی ئەدمین -------------
 @bot.message_handler(commands=['autoclose'])
 def set_autoclose(message):
     if message.chat.id == ADMIN_ID:
@@ -325,6 +326,84 @@ def list_users(message):
         else:
             bot.reply_to(message, "هیچ بەکارهێنەرێکی ڕێگەپێدراو نییە.")
 
+
+# ================== سیستەمی گەڕانەوەی قەرز بە یەک کلیک (گەڕایەوە) ==================
+
+def show_clear_debt_menu(chat_id, message_id=None):
+    with db_lock:
+        c = conn.cursor()
+        c.execute('''
+            SELECT d.user_id, d.usd, a.name
+            FROM debts d
+            LEFT JOIN allowed_users a ON d.user_id = a.user_id
+            WHERE d.usd > 0
+        ''')
+        results = c.fetchall()
+    if results:
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(InlineKeyboardButton("🗑️ سفرکردنەوەی هەموو قەرزەکان", callback_data="cd_all"))
+        for uid, usd, name in results:
+            disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+            markup.add(InlineKeyboardButton(f"❌ سفرکردنەوە: {disp_name} ({usd}$)", callback_data=f"cd_{uid}"))
+        text = "تکایە ئەو کەسە هەڵبژێرە کە دەتەوێت قەرزەکەی بە یەک کلیک سفر بکەیتەوە:"
+        if message_id: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+        else: bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        text = "هیچ کەسێک قەرزدار نییە لە ئێستادا. 🌸"
+        if message_id: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+        else: bot.send_message(chat_id, text)
+
+@bot.message_handler(commands=['clear'])
+def clear_debt(message):
+    if message.chat.id == ADMIN_ID:
+        args = message.text.split()[1:]
+        if not args:
+            show_clear_debt_menu(message.chat.id)
+            return
+        with db_lock:
+            c = conn.cursor()
+            if args[0].lower() == 'all':
+                c.execute('UPDATE debts SET usd = 0, iqd = 0')
+                conn.commit()
+                bot.reply_to(message, "✅ **هەموو قەرزەکانی ناو دەفتەرەکە بەتەواوی سفر کرانەوە.**", parse_mode='Markdown')
+            else:
+                cleared_count = 0
+                for target_id_str in args:
+                    try:
+                        target_id = int(target_id_str)
+                        c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_id,))
+                        cleared_count += 1
+                        try: bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+                        except: pass
+                    except ValueError: pass
+                conn.commit()
+                bot.reply_to(message, f"✅ قەرزی **{cleared_count}** بەکارهێنەر بە سەرکەوتوویی سفر کرایەوە.", parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cd_'))
+def handle_clear_debt_callback(call):
+    if call.from_user.id != ADMIN_ID: return
+    action = call.data.split('_')[1]
+    if action == 'all':
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE debts SET usd = 0, iqd = 0')
+            conn.commit()
+        bot.answer_callback_query(call.id, "هەموو قەرزەکان بە سەرکەوتوویی سفر کرانەوە! ✅", show_alert=True)
+        show_clear_debt_menu(call.message.chat.id, call.message.message_id)
+    else:
+        target_id = int(action)
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_id,))
+            conn.commit()
+        bot.answer_callback_query(call.id, "قەرزی کڕیارەکە سفر کرایەوە! ✅")
+        try: bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+        except: pass
+        show_clear_debt_menu(call.message.chat.id, call.message.message_id)
+
+
+# ================== سیستەمی نوێی بەڕێوەبردنی قەرزەکان بە دوگمە (/editdebt) ==================
+
 @bot.message_handler(commands=['editdebt'])
 def editdebt_command(message):
     if message.chat.id == ADMIN_ID:
@@ -361,15 +440,38 @@ def mdebt_user_selected(call):
 
         markup = InlineKeyboardMarkup(row_width=2)
         markup.add(
-            InlineKeyboardButton("➕ زیادکردن", callback_data=f"mdebt_act_{uid}_add"),
-            InlineKeyboardButton("➖ وەرگرتن", callback_data=f"mdebt_act_{uid}_pay")
+            InlineKeyboardButton("➕ زیادکردنی قەرز", callback_data=f"mdebt_act_{uid}_add"),
+            InlineKeyboardButton("➖ وەرگرتنی قەرز", callback_data=f"mdebt_act_{uid}_pay")
         )
+        markup.add(InlineKeyboardButton("🗑 سفرکردنەوەی قەرز (یەک کلیک)", callback_data=f"mdebt_clear_{uid}"))
         markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
 
         text = f"👤 **کڕیار:** {disp_name}\n\n📊 **قەرزی ئێستا:**\nدۆلار: {usd}$\nدینار: {iqd:,} دینار\n\nدەتەوێت چی بکەیت؟"
-        bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        
+        # گۆڕانکاری بۆ ڕێگریکردن لە هەڵەی "Message is not modified"
+        try:
+            bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except:
+            pass
     else:
         bot.answer_callback_query(call.id, "کڕیار نەدۆزرایەوە!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_clear_'))
+def mdebt_clear_action(call):
+    if call.from_user.id != ADMIN_ID: return
+    uid = int(call.data.split('_')[2])
+    
+    with db_lock:
+        c = conn.cursor()
+        c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (uid,))
+        conn.commit()
+        
+    bot.answer_callback_query(call.id, "قەرزەکە بەتەواوی سفر کرایەوە! ✅", show_alert=True)
+    try: bot.send_message(uid, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+    except: pass
+    
+    # نوێکردنەوەی شاشەکە بۆ بینینی قەرزی نوێ کە بووەتە سفر
+    mdebt_user_selected(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'mdebt_back')
 def mdebt_back_call(call):
@@ -444,9 +546,12 @@ def mdebt_do_action(call):
                 InlineKeyboardButton("➕ زیادکردنی قەرز", callback_data=f"mdebt_act_{uid}_add"),
                 InlineKeyboardButton("➖ کەمکردنەوە (وەرگرتن)", callback_data=f"mdebt_act_{uid}_pay")
             )
+            markup.add(InlineKeyboardButton("🗑 سفرکردنەوەی قەرز (یەک کلیک)", callback_data=f"mdebt_clear_{uid}"))
             markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
 
             bot.edit_message_text(msg_admin + "\n\nدەتەوێت کارێکی تر بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+
+# =========================================================================
 
 @bot.message_handler(commands=['add'])
 def add_codes(message):
@@ -1010,7 +1115,6 @@ def handle_checkout_cart(call):
         return
     process_checkout(call, uid, cart_dict, is_quickbuy=False)
 
-# ================== چاککردنی کێشەی دەرکەوتنی کۆدەکان لە کاتی گەڕاندنەوەدا ==================
 @bot.callback_query_handler(func=lambda call: call.data.startswith('refund_'))
 def handle_refund_request(call):
     receipt_id = call.data.split('_')[1] + "_" + call.data.split('_')[2]
@@ -1054,7 +1158,6 @@ def handle_refund_request(call):
     
     bot.answer_callback_query(call.id, "کڕینەکە هەڵوەشایەوە و کۆدەکان گەڕێندرانەوە! ✅", show_alert=True)
     
-    # چارەسەرە گرنگەکە: لێرەدا تەواوی نامە کۆنەکە دەسڕدرێتەوە و ئەم نامە نوێیە جێگەی دەگرێتەوە بۆ ئەوەی کۆدەکان بەتەواوی بشاردرێنەوە
     new_text = (
         "🧾 **پسوڵەی هەڵوەشاوە** ❌\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
@@ -1098,6 +1201,7 @@ def setup_bot_commands():
         BotCommand("unban", "♻️ لابردنی سزا"),
         BotCommand("users", "👥 لیستی کڕیارەکان"),
         BotCommand("editdebt", "🛠 دەستکاریکردنی قەرز (بە دوگمە)"),
+        BotCommand("clear", "💸 سفرکردنەوەی قەرز (بە دوگمە)"),
         BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
         BotCommand("close", "🔒 داخستنی فرۆشگا"),
         BotCommand("autoclose", "⏰ سیستەمی داخستنی تەماتیک"),
@@ -1106,7 +1210,6 @@ def setup_bot_commands():
         BotCommand("clearcodes", "⚠️ خاوێنکردنەوەی کۆگا"),
         BotCommand("stock", "📦 ئاماری کۆگا"),
         BotCommand("debts", "📒 دەفتەری قەرزەکان"),
-        BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
         BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
         BotCommand("broadcast", "📢 ناردنی ئاگاداری"),
         BotCommand("update", "✨ ڕاگەیاندنی نوێکاری"),
