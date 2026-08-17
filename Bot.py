@@ -5,7 +5,7 @@ import datetime
 import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
-TOKEN = '8781704084:AAF82RxWrCRkzOlLFKdi891FmhPMuqRPbcI'
+TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 1229224919
 
