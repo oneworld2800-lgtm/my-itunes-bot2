@@ -5,7 +5,7 @@ import datetime
 import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
-TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
+TOKEN = '8781704084:AAF82RxWrCRkzOlLFKdi891FmhPMuqRPbcI'
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 1229224919
 
@@ -161,7 +161,11 @@ def contact_admin(message):
         bot.register_next_step_handler(msg, forward_to_admin)
 
 def forward_to_admin(message):
-    bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {message.from_user.first_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
+    safe_name = message.from_user.first_name.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
+    try:
+        bot.send_message(ADMIN_ID, f"📩 **نامەی نوێ لە کڕیارەوە:**\nناو: {safe_name}\nئایدی: `{message.from_user.id}`\n\n{message.text}", parse_mode='Markdown')
+    except:
+        bot.send_message(ADMIN_ID, f"📩 نامەی نوێ لە کڕیارەوە:\nناو: {message.from_user.first_name}\nئایدی: {message.from_user.id}\n\n{message.text}")
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
 # ------------- فەرمانەکانی ئەدمین -------------
@@ -422,7 +426,10 @@ def show_debt_users_menu(chat_id, message_id=None):
 
     text = "🛠 **بەڕێوەبردنی قەرزەکان:**\n\nتکایە کڕیارێک هەڵبژێرە بۆ دەستکاریکردنی قەرزەکەی:"
     if message_id:
-        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        try:
+            bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        except:
+            pass
     else:
         bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
@@ -448,7 +455,6 @@ def mdebt_user_selected(call):
 
         text = f"👤 **کڕیار:** {disp_name}\n\n📊 **قەرزی ئێستا:**\nدۆلار: {usd}$\nدینار: {iqd:,} دینار\n\nدەتەوێت چی بکەیت؟"
         
-        # گۆڕانکاری بۆ ڕێگریکردن لە هەڵەی "Message is not modified"
         try:
             bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
         except:
@@ -470,7 +476,6 @@ def mdebt_clear_action(call):
     try: bot.send_message(uid, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
     except: pass
     
-    # نوێکردنەوەی شاشەکە بۆ بینینی قەرزی نوێ کە بووەتە سفر
     mdebt_user_selected(call)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'mdebt_back')
@@ -499,7 +504,10 @@ def mdebt_action_selected(call):
     markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"mdebt_u_{uid}"))
 
     text = f"تکایە ئەو بڕە هەڵبژێرە کە دەتەوێت {action_text}:"
-    bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    try:
+        bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    except:
+        pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_do_'))
 def mdebt_do_action(call):
@@ -549,7 +557,10 @@ def mdebt_do_action(call):
             markup.add(InlineKeyboardButton("🗑 سفرکردنەوەی قەرز (یەک کلیک)", callback_data=f"mdebt_clear_{uid}"))
             markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
 
-            bot.edit_message_text(msg_admin + "\n\nدەتەوێت کارێکی تر بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+            try:
+                bot.edit_message_text(msg_admin + "\n\nدەتەوێت کارێکی تر بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+            except:
+                pass
 
 # =========================================================================
 
@@ -761,6 +772,42 @@ def handle_database_restore(message):
                 conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
         else: bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
 
+# ================== سیستەمی نوێ بۆ دانەوەی قەرز بە دەستی ==================
+
+@bot.message_handler(commands=['paydebt'])
+def manual_pay_debt(message):
+    if message.chat.id != ADMIN_ID: return
+    try:
+        parts = message.text.split()
+        uid = int(parts[1])
+        usd_amt = int(parts[2])
+        iqd_amt = int(parts[3])
+        
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT usd, iqd, a.name FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id WHERE d.user_id = ?', (uid,))
+            res = c.fetchone()
+            
+            if res:
+                current_usd, current_iqd, name = res
+                new_usd = max(0, current_usd - usd_amt)
+                new_iqd = max(0, current_iqd - iqd_amt)
+                
+                c.execute('UPDATE debts SET usd = ?, iqd = ? WHERE user_id = ?', (new_usd, new_iqd, uid))
+                conn.commit()
+                
+                disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+                bot.reply_to(message, f"✅ پارەکە بە سەرکەوتوویی وەرگیرا!\n\n👤 کڕیار: {disp_name}\n➖ بڕی لێدراو: {usd_amt}$ ({iqd_amt:,} دینار)\n📊 قەرزی ماوە: {new_usd}$ ({new_iqd:,} دینار)")
+                
+                try: bot.send_message(uid, f"✅ بڕی **{usd_amt}$** ({iqd_amt:,} دینار) لە قەرزەکەت درا بە فرۆشگا.\n📊 قەرزی ماوەت بوو بە: **{new_usd}$** ({new_iqd:,} دینار)", parse_mode='Markdown')
+                except: pass
+            else:
+                bot.reply_to(message, "کڕیار نەدۆزرایەوە لە دەفتەری قەرزەکاندا.")
+    except:
+        bot.reply_to(message, "شێواز هەڵەیە! نموونە بۆ لێدانی ١٠ دۆلار و ١٥ هەزار دینار لە کڕیارێک:\n`/paydebt 6727540400 10 15000`", parse_mode='Markdown')
+
+# =========================================================================
+
 def send_buy_menu(chat_id, message_id=None):
     markup = InlineKeyboardMarkup(row_width=1)
     for ctype, price in prices.items():
@@ -776,7 +823,8 @@ def send_buy_menu(chat_id, message_id=None):
         
     text = "تکایە جۆری کارت هەڵبژێرە:"
     if message_id:
-        bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+        try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+        except: pass
     else:
         bot.send_message(chat_id, text, reply_markup=markup)
 
@@ -858,7 +906,8 @@ def handle_buy_mode_selection(call):
             InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
         )
         markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy"))
-        bot.edit_message_text(f"🛒 **زیادکردن بۆ سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        try: bot.edit_message_text(f"🛒 **زیادکردن بۆ سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
     else:
         markup = InlineKeyboardMarkup(row_width=1)
         markup.add(
@@ -866,7 +915,8 @@ def handle_buy_mode_selection(call):
             InlineKeyboardButton("🛒 خستنە سەبەتە", callback_data=f"mode_cart_{ctype}"),
             InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy")
         )
-        bot.edit_message_text(f"💳 **کارتی {ctype} دۆلاری**\n\nتکایە شێوازی کڕین هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        try: bot.edit_message_text(f"💳 **کارتی {ctype} دۆلاری**\n\nتکایە شێوازی کڕین هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_quick_'))
 def handle_mode_quick(call):
@@ -877,7 +927,8 @@ def handle_mode_quick(call):
         InlineKeyboardButton("2 دانە", callback_data=f"quickbuy_{ctype}_2")
     )
     markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}"))
-    bot.edit_message_text(f"⚡ **کڕینی خێرا (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    try: bot.edit_message_text(f"⚡ **کڕینی خێرا (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mode_cart_'))
 def handle_mode_cart(call):
@@ -888,7 +939,8 @@ def handle_mode_cart(call):
         InlineKeyboardButton("2 دانە", callback_data=f"addcart_{ctype}_2")
     )
     markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"buy_{ctype}"))
-    bot.edit_message_text(f"🛒 **خستنە سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    try: bot.edit_message_text(f"🛒 **خستنە سەبەتە (کارتی {ctype}$)**\n\nتکایە ژمارەی کارتەکان دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('addcart_'))
 def handle_add_cart(call):
@@ -949,7 +1001,8 @@ def handle_view_cart(call):
     markup.add(InlineKeyboardButton("➕ زیادکردنی کارتی تر بۆ سەبەتە", callback_data="back_to_buy"))
     markup.add(InlineKeyboardButton("🗑 بەتاڵکردنەوە", callback_data="emptycart"))
     
-    bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown', reply_markup=markup)
+    try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown', reply_markup=markup)
+    except: pass
 
 def get_codes_for_purchase(c, ctype, qty, used_ids):
     def get_avail(target_type, needed):
@@ -1089,11 +1142,19 @@ def process_checkout(call, uid, cart_dict, is_quickbuy=False):
     refund_markup = InlineKeyboardMarkup()
     refund_markup.add(InlineKeyboardButton("↩️ گەڕاندنەوەی کارت (لەماوەی ٣٠ چرکەدا)", callback_data=f"refund_{receipt_id}"))
     
-    bot.edit_message_text(receipt, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown', reply_markup=refund_markup)
+    try: bot.edit_message_text(receipt, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown', reply_markup=refund_markup)
+    except: pass
 
     username = f"@{call.from_user.username}" if call.from_user.username else "بوونی نییە"
-    admin_msg = f"🛒 **کڕینێکی نوێ ئەنجامدرا!**\n\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: `{uid}`\nکڕیارەکە ئەمەی کڕی: {history_desc}\n\n{receipt}"
-    bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+    safe_uname = username.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
+    safe_dbname = db_user_name.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
+
+    admin_msg = f"🛒 **کڕینێکی نوێ ئەنجامدرا!**\n\nناو: {safe_dbname}\nیوزەرنەیم: {safe_uname}\nئایدی: `{uid}`\nکڕیارەکە ئەمەی کڕی: {history_desc}\n\n{receipt}"
+    
+    try:
+        bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+    except:
+        bot.send_message(ADMIN_ID, f"🛒 کڕینێکی نوێ ئەنجامدرا!\nناو: {db_user_name}\nیوزەرنەیم: {username}\nئایدی: {uid}\nکڕیارەکە ئەمەی کڕی: {history_desc}\n\nتێبینی: نامەکە ناتوانرێت بە مارکداون بنێردرێت بەهۆی بوونی هێمای نامۆ لە ناوی کڕیاردا.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('quickbuy_'))
 def handle_quickbuy(call):
@@ -1169,19 +1230,24 @@ def handle_refund_request(call):
         "🔒 **کۆدەکان شاردرانەوە و گەڕێندرانەوە بۆ ناو کۆگا.**\n"
         "هیچ بڕە پارەیەک بۆ ئەم پسوڵەیە نەچووەتە سەر قەرزەکانت."
     )
-    bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
+    try: bot.edit_message_text(new_text, chat_id=call.message.chat.id, message_id=call.message.message_id, parse_mode='Markdown')
+    except: pass
     
+    safe_u_name = u_name.replace('_', '\\_').replace('*', '\\*').replace('`', '\\`')
     codes_str = "\n".join(code_texts_for_admin)
     admin_msg = (
         "⚠️ **ئاگاداری: گەڕاندنەوەی کارت!**\n\n"
-        f"👤 کڕیار: {u_name}\n"
+        f"👤 کڕیار: {safe_u_name}\n"
         f"🆔 ئایدی: `{uid}`\n"
         f"بڕی گەڕێندراو: {desc}\n"
         f"پاشەکەوتی قەرز: گەڕێندرایەوە ({refund_usd}$ لە قەرزەکەی سڕایەوە)\n\n"
         "**ئەم کۆدانەی خوارەوە سەلامەتن و گەڕانەوە ناو کۆگا:**\n"
         f"{codes_str}"
     )
-    bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+    try:
+        bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
+    except:
+        bot.send_message(ADMIN_ID, admin_msg)
 
 def setup_bot_commands():
     user_commands = [
@@ -1201,6 +1267,7 @@ def setup_bot_commands():
         BotCommand("unban", "♻️ لابردنی سزا"),
         BotCommand("users", "👥 لیستی کڕیارەکان"),
         BotCommand("editdebt", "🛠 دەستکاریکردنی قەرز (بە دوگمە)"),
+        BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی"),
         BotCommand("clear", "💸 سفرکردنەوەی قەرز (بە دوگمە)"),
         BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
         BotCommand("close", "🔒 داخستنی فرۆشگا"),
