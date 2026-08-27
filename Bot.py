@@ -5,6 +5,7 @@ import datetime
 import time
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
+# تۆکنە نوێیەکەت بە جێگیری لێرەدا دانراوە (پارێزراوە)
 TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
 bot = telebot.TeleBot(TOKEN)
 ADMIN_ID = 1229224919
@@ -167,6 +168,86 @@ def forward_to_admin(message):
     except:
         bot.send_message(ADMIN_ID, f"📩 نامەی نوێ لە کڕیارەوە:\nناو: {message.from_user.first_name}\nئایدی: {message.from_user.id}\n\n{message.text}")
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
+
+# ================== 🎛 پانێڵی کۆنترۆڵی ناوەندی (Admin Dashboard) ==================
+
+@bot.message_handler(commands=['admin'])
+def admin_panel_cmd(message):
+    if message.chat.id != ADMIN_ID: return
+    send_admin_panel(message.chat.id)
+
+def send_admin_panel(chat_id, message_id=None):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📦 کۆگا و کۆدەکان", callback_data="ap_stock"),
+        InlineKeyboardButton("💰 بەڕێوەبردنی قەرز", callback_data="ap_debts")
+    )
+    markup.add(
+        InlineKeyboardButton("❌ داخستنی پانێڵ", callback_data="ap_close")
+    )
+    text = "🎛 **پانێڵی کۆنترۆڵی ناوەندی (هیلال)**\n\nتکایە بەشێک هەڵبژێرە بۆ بەڕێوەبردن:"
+    if message_id:
+        try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('ap_'))
+def ap_callback_handler(call):
+    if call.from_user.id != ADMIN_ID: return
+    action = call.data.split('_')[1]
+
+    if action == 'close':
+        try: bot.delete_message(call.message.chat.id, call.message.message_id)
+        except: pass
+
+    elif action == 'main':
+        send_admin_panel(call.message.chat.id, call.message.message_id)
+
+    elif action == 'debts':
+        show_debt_users_menu(call.message.chat.id, call.message.message_id)
+
+    elif action == 'stock':
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
+            results = c.fetchall()
+            
+        markup = InlineKeyboardMarkup(row_width=2)
+        if results:
+            for ctype, count in results:
+                markup.add(InlineKeyboardButton(f"{ctype}$ ({count} دانە)", callback_data=f"ap_vc_{ctype}"))
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="ap_main"))
+        
+        text = "📦 **بەشی کۆگا و کۆدەکان:**\n\nبۆ بینین و دڵنیابوونەوە لە کۆدەکان (بەبێ کڕینیان)، کرتە لە جۆری کارتەکە بکە:"
+        try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+
+    elif action == 'vc':
+        ctype = call.data.split('_')[2]
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT code FROM codes WHERE card_type = ?', (ctype,))
+            codes = c.fetchall()
+            
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ کۆگا", callback_data="ap_stock"))
+        
+        if codes:
+            text = f"🔑 **لیستی کۆدەکانی {ctype}$ لە ناو کۆگادا:**\n\n"
+            for i, (code,) in enumerate(codes[:60], 1): # نیشاندانی تا 60 کۆد بۆ ئەوەی نامەکە زۆر درێژ نەبێت
+                text += f"{i}. `{code}`\n"
+            
+            if len(codes) > 60:
+                text += f"\n... و {len(codes) - 60} کۆدی تریش ماون."
+                
+            text += "\n\n*(تێبینی: ئەگەر هەستت کرد کۆدێک هەڵەیە و دەتەوێت بیسڕیتەوە، فەرمانی /delcode بەکاربهێنە)*"
+        else:
+            text = f"⚠️ هیچ کۆدێکی جۆری {ctype}$ لە کۆگادا نەماوە."
+            
+        try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+
 
 # ------------- فەرمانەکانی ئەدمین -------------
 @bot.message_handler(commands=['autoclose'])
@@ -331,7 +412,7 @@ def list_users(message):
             bot.reply_to(message, "هیچ بەکارهێنەرێکی ڕێگەپێدراو نییە.")
 
 
-# ================== سیستەمی گەڕانەوەی قەرز بە یەک کلیک (گەڕایەوە) ==================
+# ================== سیستەمی گەڕانەوەی قەرز بە یەک کلیک ==================
 
 def show_clear_debt_menu(chat_id, message_id=None):
     with db_lock:
@@ -406,7 +487,7 @@ def handle_clear_debt_callback(call):
         show_clear_debt_menu(call.message.chat.id, call.message.message_id)
 
 
-# ================== سیستەمی نوێی بەڕێوەبردنی قەرزەکان بە دوگمە (/editdebt) ==================
+# ================== سیستەمی بەڕێوەبردنی قەرزەکان بە دوگمە (/editdebt) ==================
 
 @bot.message_handler(commands=['editdebt'])
 def editdebt_command(message):
@@ -423,6 +504,9 @@ def show_debt_users_menu(chat_id, message_id=None):
     for uid, name in users:
         disp_name = name if name and name != "نەناسراو" else "نەناسراو"
         markup.add(InlineKeyboardButton(f"👤 {disp_name}", callback_data=f"mdebt_u_{uid}"))
+
+    # بەستنەوە بە پانێڵی ئەدمینەوە
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ پانێڵی ئەدمین", callback_data="ap_main"))
 
     text = "🛠 **بەڕێوەبردنی قەرزەکان:**\n\nتکایە کڕیارێک هەڵبژێرە بۆ دەستکاریکردنی قەرزەکەی:"
     if message_id:
@@ -1257,6 +1341,7 @@ def setup_bot_commands():
     ]
     
     admin_commands = [
+        BotCommand("admin", "🎛 پانێڵی کۆنترۆڵی ناوەندی"),
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
         BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
         BotCommand("contact", "📞 پەیوەندیکردن"),
