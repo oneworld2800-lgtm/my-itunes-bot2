@@ -759,7 +759,8 @@ def process_direct_buy(call):
         f"🛒 **جۆر:** {history_desc}\n💰 **دۆلار:** {total_usd}$\n💵 **دینار:** {total_iqd:,} د\n📊 **قەرزی نوێ:** {current_debt + total_usd}$ (لە {limit}$)\n━━━━━━━━━━━━━━━━━━━━\n"
         "🎁 **کۆدەکان:** (بۆ کۆپیکردن کرتە بکە)\n\n"
     )
-    receipt += "\n".join([f" `{x['code']}`" for x in assigned_codes]) + "\n\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
+    # لێرەدا کۆدەکان جیا دەکرێنەوە بۆ کڕیار بەپێی جۆرەکەیان
+    receipt += "\n".join([f"▫️ کارتی {x['type']}$: `{x['code']}`" for x in assigned_codes]) + "\n\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
 
     bot.answer_callback_query(call.id, "کڕینەکەت سەرکەوتوو بوو! ✅")
     
