@@ -213,10 +213,7 @@ def ap_callback_handler(call):
         try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
         except: pass
 
-# ================== فەرمانەکانی ئەدمین (نەگۆڕاوە) ==================
-@bot.message_handler(commands=['autoclose', 'close', 'open', 'allow', 'remove', 'setname', 'ban', 'unban', 'users', 'add', 'delcode', 'clearcodes', 'setlimit', 'stock', 'debts', 'broadcast', 'update', 'backup', 'restore'])
-def admin_commands_handler(message):
-    pass # تێبینی: بۆ کورتکردنەوەی کۆدەکە لێرەدا، هەمان ئەو فەرمانانەی پێشوو کە هیچ گۆڕانکارییەکیان تێدا نەکراوە وەک خۆیان کار دەکەن لە خوارەوە
+# ================== فەرمانەکانی ئەدمین ==================
 
 @bot.message_handler(commands=['autoclose'])
 def set_autoclose(message):
@@ -290,6 +287,88 @@ def allow_user(message):
                 conn.commit()
             bot.reply_to(message, f"کڕیار بە ئایدی {new_user_id} ڕێگەی پێدرا.")
         except: bot.reply_to(message, "شێواز هەڵەیە: /allow 987654321 ناوەکە")
+        
+@bot.message_handler(commands=['remove'])
+def remove_user(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            target_id = int(message.text.replace('/remove ', '').strip())
+            with db_lock:
+                c = conn.cursor()
+                c.execute('DELETE FROM allowed_users WHERE user_id = ?', (target_id,))
+                conn.commit()
+            bot.reply_to(message, f"کڕیار بە ئایدی {target_id} لە فرۆشگاکە لادرا.")
+        except:
+            bot.reply_to(message, "شێواز هەڵەیە: /remove 987654321")
+
+@bot.message_handler(commands=['setname'])
+def set_user_name(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            parts = message.text.split(maxsplit=2)
+            target_id = int(parts[1])
+            new_name = parts[2]
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE allowed_users SET name = ? WHERE user_id = ?', (new_name, target_id))
+                conn.commit()
+            bot.reply_to(message, f"✅ ناوی کڕیار بە ئایدی {target_id} گۆڕدرا بۆ: **{new_name}**", parse_mode='Markdown')
+        except:
+            bot.reply_to(message, "شێواز هەڵەیە. نموونە:\n`/setname 123456789 هێمن`", parse_mode='Markdown')
+
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            parts = message.text.split()
+            target_id = int(parts[1])
+            duration_str = parts[2]
+            duration_val = int(duration_str[:-1])
+            duration_unit = duration_str[-1].lower()
+            now = datetime.datetime.now()
+            if duration_unit == 'h': ban_until = now + datetime.timedelta(hours=duration_val)
+            elif duration_unit == 'd': ban_until = now + datetime.timedelta(days=duration_val)
+            else: raise ValueError
+            ban_until_str = ban_until.strftime('%Y-%m-%d %H:%M:%S')
+            with db_lock:
+                c = conn.cursor()
+                c.execute('INSERT OR REPLACE INTO bans (user_id, ban_until) VALUES (?, ?)', (target_id, ban_until_str))
+                conn.commit()
+            bot.reply_to(message, f"کڕیار `{target_id}` سزادرا تا بەرواری {ban_until_str}", parse_mode='Markdown')
+            bot.send_message(target_id, f"⚠️ **ئاگاداری:**\nتۆ سزادراویت و ناتوانیت هیچ کڕینێک بکەیت تا بەرواری:\n`{ban_until_str}`", parse_mode='Markdown')
+        except:
+            bot.reply_to(message, "شێواز هەڵەیە!\nبۆ کاتژمێر: /ban 12345 5h\nبۆ ڕۆژ: /ban 12345 2d")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            target_id = int(message.text.replace('/unban ', '').strip())
+            with db_lock:
+                c = conn.cursor()
+                c.execute('DELETE FROM bans WHERE user_id = ?', (target_id,))
+                conn.commit()
+            bot.reply_to(message, f"سزای کڕیار `{target_id}` بە سەرکەوتوویی لابرا.", parse_mode='Markdown')
+            bot.send_message(target_id, "✅ **ئاگاداری:**\nسزاکەت لەلایەن خاوەن فرۆشگاوە لابرا، ئێستا دەتوانیت کڕینەکانت ئەنجام بدەیت.", parse_mode='Markdown')
+        except:
+            bot.reply_to(message, "شێواز هەڵەیە: /unban 987654321")
+
+@bot.message_handler(commands=['users'])
+def list_users(message):
+    if message.chat.id == ADMIN_ID:
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT user_id, name FROM allowed_users')
+            users = c.fetchall()
+        if users:
+            msg = "👥 **لیستی بەکارهێنەرە ڕێگەپێدراوەکان:**\n\n"
+            for uid, name5 in users:
+                disp_name = name5 if name5 and name5 != "نەناسراو" else "نەناسراو"
+                msg += f"👤 **ناو:** {disp_name}\n🆔 **ئایدی:** `{uid}`\n------------------\n"
+            bot.reply_to(message, msg, parse_mode='Markdown')
+        else:
+            bot.reply_to(message, "هیچ بەکارهێنەرێکی ڕێگەپێدراو نییە.")
+
 
 @bot.message_handler(commands=['add'])
 def add_codes(message):
@@ -356,6 +435,143 @@ def handle_delcode_callbacks(call):
             try: bot.edit_message_text(f"لیستی کۆدەکانی {ctype}$ بۆ سڕینەوە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
             except: pass
 
+@bot.message_handler(commands=['clearcodes'])
+def clear_codes(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            target = message.text.replace('/clearcodes ', '').strip()
+            if not target: raise ValueError
+            with db_lock:
+                c = conn.cursor()
+                if target.lower() == 'all':
+                    c.execute('DELETE FROM codes')
+                    msg = "🗑️ **هەموو کۆدەکانی کۆگا بەتەواوی سڕانەوە.**"
+                else:
+                    c.execute('DELETE FROM codes WHERE card_type = ?', (target,))
+                    msg = f"🗑️ هەموو کۆدەکانی جۆری **{target}$** سڕانەوە."
+                conn.commit()
+                bot.reply_to(message, msg, parse_mode='Markdown')
+        except: bot.reply_to(message, "شێواز هەڵەیە.\nبۆ سڕینەوەی جۆرێک: /clearcodes 2\nبۆ سڕینەوەی هەمووی: /clearcodes all")
+
+
+@bot.message_handler(commands=['setlimit'])
+def set_limit(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            parts = message.text.split()
+            target_id, new_limit = int(parts[1]), int(parts[2])
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE debts SET credit_limit = ? WHERE user_id = ?', (new_limit, target_id))
+                conn.commit()
+            bot.reply_to(message, f"سنووری قەرزی بەکارهێنەر {target_id} کرا بە {new_limit} دۆلار.")
+            bot.send_message(target_id, f"ئاگاداری: سنووری قەرزەکەت لەلایەن هیلال نوێکرایەوە بۆ {new_limit} دۆلار.")
+        except: bot.reply_to(message, "شێواز هەڵەیە: /setlimit ID AMOUNT")
+
+@bot.message_handler(commands=['stock'])
+def check_stock(message):
+    if message.chat.id == ADMIN_ID:
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
+            results = c.fetchall()
+        if results:
+            msg = "📊 **ئاماری کۆگا:**\n\n"
+            for card_type, count in results: msg += f"کارتی {card_type}$ : **{count}** دانە\n"
+            bot.reply_to(message, msg, parse_mode='Markdown')
+        else: bot.reply_to(message, "کۆگا بەتاڵە.")
+
+@bot.message_handler(commands=['debts'])
+def check_all_debts(message):
+    if message.chat.id == ADMIN_ID:
+        with db_lock:
+            c = conn.cursor()
+            c.execute('''
+                SELECT d.user_id, d.usd, d.iqd, d.credit_limit, a.name
+                FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id
+                WHERE d.usd > 0
+            ''')
+            results = c.fetchall()
+        if results:
+            msg = "📒 **دەفتەری قەرزەکان:**\n\n"
+            tot_usd, tot_iqd = 0, 0
+            for uid, usd, iqd, limit, name in results:
+                disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+                msg += f"👤 **{disp_name}** | ئایدی: `{uid}`\n💸 قەرز: {usd}$ ({iqd:,} د) | سنور: {usd}$/{limit}$\n\n"
+                tot_usd += usd
+                tot_iqd += iqd
+            msg += f"💰 **کۆی گشتی قەرز:** {tot_usd}$ ({tot_iqd:,} دینار)"
+            bot.reply_to(message, msg, parse_mode='Markdown')
+        else: bot.reply_to(message, "هیچ قەرزێک نییە.")
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast(message):
+    if message.chat.id == ADMIN_ID:
+        text = message.text.replace('/broadcast', '').strip()
+        if text:
+            with db_lock:
+                c = conn.cursor()
+                c.execute('SELECT user_id FROM allowed_users')
+                users = c.fetchall()
+            count = 0
+            for (uid,) in users:
+                try:
+                    bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگا:**\n\n{text}", parse_mode='Markdown')
+                    count += 1
+                except: pass
+            bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
+        else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە: /broadcast پەیامەکەت لێرە")
+
+@bot.message_handler(commands=['update'])
+def announce_update(message):
+    if message.chat.id == ADMIN_ID:
+        text = message.text.replace('/update', '').strip()
+        if text:
+            with db_lock:
+                c = conn.cursor()
+                c.execute('SELECT user_id FROM allowed_users')
+                users = c.fetchall()
+            count = 0
+            for (uid,) in users:
+                try:
+                    update_msg = f"✨ **نوێکاری لە فرۆشگا!** ✨\n\n{text}"
+                    bot.send_message(uid, update_msg, parse_mode='Markdown')
+                    count += 1
+                except: pass
+            bot.reply_to(message, f"✅ نامەی نوێکاری بە سەرکەوتوویی بۆ {count} کڕیار نێردرا.")
+        else: bot.reply_to(message, "تکایە دەقەکەی لەپێش بنووسە. نموونە:\n`/update سەبەتەی کڕین بۆ فرۆشگاکەمان زیاد کرا!`", parse_mode='Markdown')
+
+@bot.message_handler(commands=['backup'])
+def send_backup(message):
+    if message.chat.id == ADMIN_ID:
+        try:
+            with open('itunes_store_v5.db', 'rb') as doc:
+                bot.send_document(message.chat.id, doc, caption="💾 **ئەمە فایلی داتابەیسەکەتە (باکئەپ).**\n\nتەواوی کۆدەکان، قەرزەکان، و کڕیارەکانی تێدایە. دەتوانیت ئەم فایلە لای خۆت بپارێزیت.", parse_mode='Markdown')
+        except Exception as e: bot.reply_to(message, f"کێشەیەک هەیە لە ناردنی فایلەکە: {e}")
+
+@bot.message_handler(commands=['restore'])
+def restore_instructions(message):
+    if message.chat.id == ADMIN_ID: bot.reply_to(message, "بۆ گەڕاندنەوەی زانیارییەکان (Restore)، تکایە تەنها ئەو فایلە باکئەپەی کە پێشتر وەرتگرتووە (`itunes_store_v5.db`) ڕاستەوخۆ بنێرە بۆ ئێرە و بۆتەکە خۆی دەیخوێنێتەوە.")
+
+@bot.message_handler(content_types=['document'])
+def handle_database_restore(message):
+    global conn
+    if message.chat.id == ADMIN_ID:
+        if message.document.file_name.endswith('.db'):
+            try:
+                bot.reply_to(message, "⏳ خەریکی خوێندنەوەی فایلەکەم...")
+                file_info = bot.get_file(message.document.file_id)
+                downloaded_file = bot.download_file(file_info.file_path)
+                with db_lock:
+                    conn.close()
+                    with open('itunes_store_v5.db', 'wb') as new_file: new_file.write(downloaded_file)
+                    conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
+                bot.reply_to(message, "✅ داتابەیسەکە بە سەرکەوتوویی گەڕێندرایەوە (Restore). هەموو کۆدەکان، قەرزەکان و کڕیارەکان گەڕانەوە شوێنی خۆیان!")
+            except Exception as e:
+                bot.reply_to(message, f"❌ کێشەیەک ڕوویدا لە کاتی گەڕاندنەوەدا: {e}")
+                conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
+        else: bot.reply_to(message, "ئەمە فایلی داتابەیس نییە. تکایە تەنها فایلی `.db` بنێرە.")
+
 @bot.message_handler(commands=['paydebt'])
 def manual_pay_debt(message):
     if message.chat.id != ADMIN_ID: return
@@ -376,6 +592,198 @@ def manual_pay_debt(message):
                 except: pass
             else: bot.reply_to(message, "کڕیار نەدۆزرایەوە.")
     except: bot.reply_to(message, "شێواز هەڵەیە: /paydebt ID USD IQD")
+
+# ================== سیستەمی گەڕانەوەی قەرز بە یەک کلیک (clear) ==================
+
+def show_clear_debt_menu(chat_id, message_id=None):
+    with db_lock:
+        c = conn.cursor()
+        c.execute('''
+            SELECT d.user_id, d.usd, a.name
+            FROM debts d
+            LEFT JOIN allowed_users a ON d.user_id = a.user_id
+            WHERE d.usd > 0
+        ''')
+        results = c.fetchall()
+    if results:
+        markup = InlineKeyboardMarkup(row_width=1)
+        markup.add(InlineKeyboardButton("🗑️ سفرکردنەوەی هەموو قەرزەکان", callback_data="cd_all"))
+        for uid, usd, name in results:
+            disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+            markup.add(InlineKeyboardButton(f"❌ سفرکردنەوە: {disp_name} ({usd}$)", callback_data=f"cd_{uid}"))
+        text = "تکایە ئەو کەسە هەڵبژێرە کە دەتەوێت قەرزەکەی بە یەک کلیک سفر بکەیتەوە:"
+        if message_id: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup)
+        else: bot.send_message(chat_id, text, reply_markup=markup)
+    else:
+        text = "هیچ کەسێک قەرزدار نییە لە ئێستادا. 🌸"
+        if message_id: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+        else: bot.send_message(chat_id, text)
+
+@bot.message_handler(commands=['clear'])
+def clear_debt(message):
+    if message.chat.id == ADMIN_ID:
+        args = message.text.split()[1:]
+        if not args:
+            show_clear_debt_menu(message.chat.id)
+            return
+        with db_lock:
+            c = conn.cursor()
+            if args[0].lower() == 'all':
+                c.execute('UPDATE debts SET usd = 0, iqd = 0')
+                conn.commit()
+                bot.reply_to(message, "✅ **هەموو قەرزەکانی ناو دەفتەرەکە بەتەواوی سفر کرانەوە.**", parse_mode='Markdown')
+            else:
+                cleared_count = 0
+                for target_id_str in args:
+                    try:
+                        target_id = int(target_id_str)
+                        c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_id,))
+                        cleared_count += 1
+                        try: bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+                        except: pass
+                    except ValueError: pass
+                conn.commit()
+                bot.reply_to(message, f"✅ قەرزی **{cleared_count}** بەکارهێنەر بە سەرکەوتوویی سفر کرایەوە.", parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('cd_'))
+def handle_clear_debt_callback(call):
+    if call.from_user.id != ADMIN_ID: return
+    action = call.data.split('_')[1]
+    if action == 'all':
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE debts SET usd = 0, iqd = 0')
+            conn.commit()
+        bot.answer_callback_query(call.id, "هەموو قەرزەکان بە سەرکەوتوویی سفر کرانەوە! ✅", show_alert=True)
+        show_clear_debt_menu(call.message.chat.id, call.message.message_id)
+    else:
+        target_id = int(action)
+        with db_lock:
+            c = conn.cursor()
+            c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_id,))
+            conn.commit()
+        bot.answer_callback_query(call.id, "قەرزی کڕیارەکە سفر کرایەوە! ✅")
+        try: bot.send_message(target_id, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+        except: pass
+        show_clear_debt_menu(call.message.chat.id, call.message.message_id)
+
+# ================== بەڕێوەبردنی قەرزەکان بە دوگمە (editdebt) ==================
+
+@bot.message_handler(commands=['editdebt'])
+def editdebt_command(message):
+    if message.chat.id == ADMIN_ID:
+        show_debt_users_menu(message.chat.id)
+
+def show_debt_users_menu(chat_id, message_id=None):
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT user_id, name FROM allowed_users')
+        users = c.fetchall()
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    for uid, name in users:
+        disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+        markup.add(InlineKeyboardButton(f"👤 {disp_name}", callback_data=f"mdebt_u_{uid}"))
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ پانێڵی ئەدمین", callback_data="ap_main"))
+
+    text = "🛠 **بەڕێوەبردنی قەرزەکان:**\n\nتکایە کڕیارێک هەڵبژێرە بۆ دەستکاریکردنی قەرزەکەی:"
+    if message_id:
+        try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+    else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_u_'))
+def mdebt_user_selected(call):
+    uid = int(call.data.split('_')[2])
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT d.usd, d.iqd, a.name FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id WHERE d.user_id = ?', (uid,))
+        res = c.fetchone()
+    if res:
+        usd, iqd, name = res
+        disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+        markup = InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            InlineKeyboardButton("➕ زیادکردنی قەرز", callback_data=f"mdebt_act_{uid}_add"),
+            InlineKeyboardButton("➖ وەرگرتنی قەرز", callback_data=f"mdebt_act_{uid}_pay")
+        )
+        markup.add(InlineKeyboardButton("🗑 سفرکردنەوەی قەرز (یەک کلیک)", callback_data=f"mdebt_clear_{uid}"))
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
+        text = f"👤 **کڕیار:** {disp_name}\n\n📊 **قەرزی ئێستا:**\nدۆلار: {usd}$\nدینار: {iqd:,} دینار\n\nدەتەوێت چی بکەیت؟"
+        try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+    else: bot.answer_callback_query(call.id, "کڕیار نەدۆزرایەوە!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_clear_'))
+def mdebt_clear_action(call):
+    if call.from_user.id != ADMIN_ID: return
+    uid = int(call.data.split('_')[2])
+    with db_lock:
+        c = conn.cursor()
+        c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (uid,))
+        conn.commit()
+    bot.answer_callback_query(call.id, "قەرزەکە بەتەواوی سفر کرایەوە! ✅", show_alert=True)
+    try: bot.send_message(uid, "🎉 پیرۆزە! هیلال هەموو قەرزەکانی لەسەرت سفر کردەوە.")
+    except: pass
+    mdebt_user_selected(call)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'mdebt_back')
+def mdebt_back_call(call):
+    show_debt_users_menu(call.message.chat.id, call.message.message_id)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_act_'))
+def mdebt_action_selected(call):
+    parts = call.data.split('_')
+    uid, action = parts[2], parts[3] 
+    action_text = "زیاد بکەیت (بیخەیتە سەری)" if action == 'add' else "کەمی بکەیتەوە (وەری بگریت)"
+    markup = InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    for ctype, price in prices.items():
+        buttons.append(InlineKeyboardButton(f"{ctype}$ ({price:,} د)", callback_data=f"mdebt_do_{uid}_{action}_{ctype}"))
+    for i in range(0, len(buttons), 2):
+        if i+1 < len(buttons): markup.add(buttons[i], buttons[i+1])
+        else: markup.add(buttons[i])
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data=f"mdebt_u_{uid}"))
+    text = f"تکایە ئەو بڕە هەڵبژێرە کە دەتەوێت {action_text}:"
+    try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_do_'))
+def mdebt_do_action(call):
+    if call.from_user.id != ADMIN_ID: return
+    parts = call.data.split('_')
+    uid, action, ctype = int(parts[2]), parts[3], parts[4]
+    amount_usd = int(ctype)
+    amount_iqd = prices.get(ctype, 0)
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT d.usd, d.iqd, a.name FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id WHERE d.user_id = ?', (uid,))
+        res = c.fetchone()
+        if res:
+            current_usd, current_iqd, name = res
+            disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+            if action == 'add':
+                new_usd, new_iqd = current_usd + amount_usd, current_iqd + amount_iqd
+                msg_admin = f"✅ قەرز بە سەرکەوتوویی زیاد کرا!\n\n👤 کڕیار: **{disp_name}**\n➕ زیادکرا: {amount_usd}$ ({amount_iqd:,} د)\n📊 قەرزی نوێ: {new_usd}$"
+                msg_user = f"⚠️ **ئاگاداری:**\nبڕی **{amount_usd}$** ({amount_iqd:,} دینار) خرایە سەر قەرزەکانت لەلایەن فرۆشگاوە.\n📊 کۆی گشتی قەرزت ئێستا بوو بە: **{new_usd}$**"
+            else: 
+                new_usd, new_iqd = max(0, current_usd - amount_usd), max(0, current_iqd - amount_iqd)
+                msg_admin = f"✅ پارەکە وەرگیرا!\n\n👤 کڕیار: **{disp_name}**\n➖ کەمکرایەوە: {amount_usd}$ ({amount_iqd:,} د)\n📊 قەرزی ماوە: {new_usd}$"
+                msg_user = f"✅ بڕی **{amount_usd}$** ({amount_iqd:,} دینار) لە قەرزەکەت درا بە فرۆشگا.\n📊 قەرزی ماوەت بوو بە: **{new_usd}$**"
+            c.execute('UPDATE debts SET usd = ?, iqd = ? WHERE user_id = ?', (new_usd, new_iqd, uid))
+            conn.commit()
+            bot.answer_callback_query(call.id, "سەرکەوتوو بوو! ✅", show_alert=True)
+            try: bot.send_message(uid, msg_user, parse_mode='Markdown')
+            except: pass
+            markup = InlineKeyboardMarkup(row_width=2)
+            markup.add(
+                InlineKeyboardButton("➕ زیادکردنی قەرز", callback_data=f"mdebt_act_{uid}_add"),
+                InlineKeyboardButton("➖ کەمکردنەوە (وەرگرتن)", callback_data=f"mdebt_act_{uid}_pay")
+            )
+            markup.add(InlineKeyboardButton("🗑 سفرکردنەوەی قەرز (یەک کلیک)", callback_data=f"mdebt_clear_{uid}"))
+            markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="mdebt_back"))
+            try: bot.edit_message_text(msg_admin + "\n\nدەتەوێت کارێکی تر بکەیت؟", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+            except: pass
 
 # ================== سیستەمی نوێی کڕینەکان (بێ سەبەتە) ==================
 
@@ -618,13 +1026,48 @@ def handle_refund_request(call):
     try: bot.send_message(ADMIN_ID, admin_msg, parse_mode='Markdown')
     except: bot.send_message(ADMIN_ID, admin_msg)
 
+# ================== دانانی تەواوی فەرمانەکان ==================
 def setup_bot_commands():
-    user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن")]
-    admin_commands = [BotCommand("admin", "🎛 پانێڵی ئەدمین"), BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی")]
+    user_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")
+    ]
+    
+    admin_commands = [
+        BotCommand("admin", "🎛 پانێڵی کۆنترۆڵی ناوەندی"),
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن"),
+        BotCommand("allow", "✅ ڕێگەپێدان بە کڕیار"),
+        BotCommand("remove", "❌ سڕینەوەی کڕیار"),
+        BotCommand("setname", "✏️ گۆڕینی ناوی کڕیار"),
+        BotCommand("ban", "🚫 سزادانی کڕیار"),
+        BotCommand("unban", "♻️ لابردنی سزا"),
+        BotCommand("users", "👥 لیستی کڕیارەکان"),
+        BotCommand("editdebt", "🛠 دەستکاریکردنی قەرز (بە دوگمە)"),
+        BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی"),
+        BotCommand("clear", "💸 سفرکردنەوەی قەرز (بە دوگمە)"),
+        BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
+        BotCommand("close", "🔒 داخستنی فرۆشگا"),
+        BotCommand("autoclose", "⏰ سیستەمی داخستنی تەماتیک"),
+        BotCommand("add", "➕ زیادکردنی کۆد"),
+        BotCommand("delcode", "🗑 سڕینەوەی کۆد"),
+        BotCommand("clearcodes", "⚠️ خاوێنکردنەوەی کۆگا"),
+        BotCommand("stock", "📦 ئاماری کۆگا"),
+        BotCommand("debts", "📒 دەفتەری قەرزەکان"),
+        BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
+        BotCommand("broadcast", "📢 ناردنی ئاگاداری"),
+        BotCommand("update", "✨ ڕاگەیاندنی نوێکاری"),
+        BotCommand("backup", "💾 وەرگرتنی باکئەپ (فایل)"),
+        BotCommand("restore", "🔄 گەڕاندنەوەی باکئەپ")
+    ]
+    
     try:
         bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-        bot.set_my_commands(admin_commands + user_commands, scope=BotCommandScopeChat(ADMIN_ID))
-    except Exception as e: print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
+        bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
+    except Exception as e:
+        print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
 
 def auto_schedule_checker():
     while True:
@@ -682,6 +1125,6 @@ def auto_schedule_checker():
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 
-print("بۆتەکە ئێستا کار دەکات بێ سەبەتە و بە سیستەمی نوێوە...")
+print("بۆتەکە ئێستا کار دەکات و هەموو فەرمانەکان گەڕانەوە مێنو...")
 setup_bot_commands()
 bot.infinity_polling()
