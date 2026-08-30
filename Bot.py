@@ -363,7 +363,7 @@ def handle_delcode_callbacks(call):
             markup = InlineKeyboardMarkup(row_width=1)
             for cid, code in codes: markup.add(InlineKeyboardButton(f"❌ سڕینەوە: {code}", callback_data=f"rmc_{cid}_{ctype}"))
             markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="delcode_back"))
-            try: bot.edit_message_text(f"لیستی کۆدەکانی {ctype}$:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
+            try: bot.edit_message_text(f"لیستی کۆدەکانی {ctype}$ بۆ سڕینەوە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup)
             except: pass
 
 @bot.message_handler(commands=['clearcodes'])
@@ -383,6 +383,7 @@ def clear_codes(message):
                 conn.commit()
                 bot.reply_to(message, msg, parse_mode='Markdown')
         except: bot.reply_to(message, "شێواز هەڵەیە: /clearcodes 2 یان all")
+
 
 @bot.message_handler(commands=['setlimit'])
 def set_limit(message):
@@ -442,7 +443,7 @@ def broadcast(message):
                 try: bot.send_message(uid, f"📢 **ئاگاداری لە فرۆشگا:**\n\n{text}", parse_mode='Markdown'); count += 1
                 except: pass
             bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
-        else: bot.reply_to(message, "تکایە دەق بنووسە.")
+        else: bot.reply_to(message, "تکایە دەق بنووسە: /broadcast پەیامەکەت لێرە")
 
 @bot.message_handler(commands=['update'])
 def announce_update(message):
@@ -457,12 +458,11 @@ def announce_update(message):
             for (uid,) in users:
                 try:
                     update_msg = f"✨ **نوێکاری لە فرۆشگا!** ✨\n\n{text}"
-                    # ناردنی نامەکە لەگەڵ مێنوی نوێ بۆ ئەوەی دوگمەکانیان ئۆتۆماتیک بگۆڕێت
                     bot.send_message(uid, update_msg, parse_mode='Markdown', reply_markup=get_main_menu(uid))
                     count += 1
                 except: pass
             bot.reply_to(message, f"✅ نامەی نوێکاری و دوگمە نوێیەکان بە سەرکەوتوویی بۆ {count} کڕیار نێردرا.")
-        else: bot.reply_to(message, "تکایە دەق بنووسە: /update دوگمەی نوێ زیادکرا.")
+        else: bot.reply_to(message, "تکایە دەق بنووسە. نموونە:\n`/update سەبەتەی کڕین بۆ فرۆشگاکەمان زیاد کرا!`", parse_mode='Markdown')
 
 @bot.message_handler(commands=['backup'])
 def send_backup(message):
@@ -890,12 +890,46 @@ def refresh_keyboard_fallback(message):
         bot.reply_to(message, "🔄 مێنوی دوگمەکانت نوێکرایەوە. تکایە دوگمە نوێیەکانی خوارەوە بەکاربهێنە:", reply_markup=get_main_menu(uid))
 
 def setup_bot_commands():
-    user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن")]
-    admin_commands = [BotCommand("admin", "🎛 پانێڵی ئەدمین"), BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی"), BotCommand("update", "✨ نوێکاری بۆ هەمووان")]
+    user_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")
+    ]
+    
+    admin_commands = [
+        BotCommand("admin", "🎛 پانێڵی کۆنترۆڵی ناوەندی"),
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن"),
+        BotCommand("allow", "✅ ڕێگەپێدان بە کڕیار"),
+        BotCommand("remove", "❌ سڕینەوەی کڕیار"),
+        BotCommand("setname", "✏️ گۆڕینی ناوی کڕیار"),
+        BotCommand("ban", "🚫 سزادانی کڕیار"),
+        BotCommand("unban", "♻️ لابردنی سزا"),
+        BotCommand("users", "👥 لیستی کڕیارەکان"),
+        BotCommand("editdebt", "🛠 دەستکاریکردنی قەرز"),
+        BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی"),
+        BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
+        BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
+        BotCommand("close", "🔒 داخستنی فرۆشگا"),
+        BotCommand("autoclose", "⏰ سیستەمی داخستنی تەماتیک"),
+        BotCommand("add", "➕ زیادکردنی کۆد"),
+        BotCommand("delcode", "🗑 سڕینەوەی کۆد"),
+        BotCommand("clearcodes", "⚠️ خاوێنکردنەوەی کۆگا"),
+        BotCommand("stock", "📦 ئاماری کۆگا"),
+        BotCommand("debts", "📒 دەفتەری قەرزەکان"),
+        BotCommand("setlimit", "🚧 گۆڕینی سنوری قەرز"),
+        BotCommand("broadcast", "📢 ناردنی ئاگاداری"),
+        BotCommand("update", "✨ ڕاگەیاندنی نوێکاری"),
+        BotCommand("backup", "💾 وەرگرتنی باکئەپ"),
+        BotCommand("restore", "🔄 گەڕاندنەوەی باکئەپ")
+    ]
+    
     try:
         bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
-        bot.set_my_commands(admin_commands + user_commands, scope=BotCommandScopeChat(ADMIN_ID))
-    except Exception as e: print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
+        bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
+    except Exception as e:
+        print("کێشەیەک لە دانانی فەرمانەکان هەبوو:", e)
 
 def auto_schedule_checker():
     while True:
