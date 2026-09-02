@@ -109,49 +109,43 @@ def forward_to_admin(message):
     except: bot.send_message(ADMIN_ID, f"📩 نامەی نوێ لە کڕیارەوە:\nناو: {message.from_user.first_name}\nئایدی: {message.from_user.id}\n\n{message.text}")
     bot.reply_to(message, "نامەکەت بە سەرکەوتوویی نێردرا. سوپاس! ✅")
 
-# ================== 🎛 پانێڵی ئەدمین ==================
-@bot.message_handler(commands=['admin'])
-def admin_panel_cmd(message):
-    if message.chat.id == ADMIN_ID: send_admin_panel(message.chat.id)
+# ================== 📦 پانێڵی سەربەخۆی بینینی کۆدەکان ==================
+@bot.message_handler(commands=['viewcodes'])
+def view_codes_cmd(message):
+    if message.chat.id == ADMIN_ID: send_viewcodes_panel(message.chat.id)
 
-def send_admin_panel(chat_id, message_id=None):
+def send_viewcodes_panel(chat_id, message_id=None):
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
+        results = c.fetchall()
     markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(InlineKeyboardButton("📦 کۆگا و کۆدەکان", callback_data="ap_stock"), InlineKeyboardButton("💰 بەڕێوەبردنی قەرز", callback_data="ap_debts"))
-    markup.add(InlineKeyboardButton("❌ داخستنی پانێڵ", callback_data="ap_close"))
-    text = "🎛 **پانێڵی کۆنترۆڵی ناوەندی (هیلال)**\n\nتکایە بەشێک هەڵبژێرە:"
+    if results:
+        for ctype, count in results: markup.add(InlineKeyboardButton(f"{ctype}$ ({count} دانە)", callback_data=f"vc_show_{ctype}"))
+    markup.add(InlineKeyboardButton("❌ داخستن", callback_data="vc_close"))
+    text = "📦 **پانێڵی بینینی کۆدەکان:**\n\nبۆ بینینی کۆدەکان کرتە لە جۆرەکەی بکە:"
     if message_id:
         try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
         except: pass
     else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('ap_'))
-def ap_callback_handler(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith('vc_'))
+def vc_callback_handler(call):
     if call.from_user.id != ADMIN_ID: return
     action = call.data.split('_')[1]
     if action == 'close':
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
         except: pass
-    elif action == 'main': send_admin_panel(call.message.chat.id, call.message.message_id)
-    elif action == 'debts': show_debt_users_menu(call.message.chat.id, call.message.message_id)
-    elif action == 'stock':
-        with db_lock:
-            c = conn.cursor()
-            c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
-            results = c.fetchall()
-        markup = InlineKeyboardMarkup(row_width=2)
-        if results:
-            for ctype, count in results: markup.add(InlineKeyboardButton(f"{ctype}$ ({count} دانە)", callback_data=f"ap_vc_{ctype}"))
-        markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="ap_main"))
-        try: bot.edit_message_text("📦 **بەشی کۆگا:**\n\nبۆ بینینی کۆدەکان کرتە لە جۆرەکەی بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-        except: pass
-    elif action == 'vc':
+    elif action == 'main':
+        send_viewcodes_panel(call.message.chat.id, call.message.message_id)
+    elif action == 'show':
         ctype = call.data.split('_')[2]
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT code FROM codes WHERE card_type = ?', (ctype,))
             codes = c.fetchall()
         markup = InlineKeyboardMarkup(row_width=1)
-        markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ کۆگا", callback_data="ap_stock"))
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="vc_main"))
         if codes:
             text = f"🔑 **لیستی کۆدەکانی {ctype}$ لە ناو کۆگادا:**\n\n"
             for i, (code,) in enumerate(codes[:60], 1): text += f"{i}. `{code}`\n"
@@ -571,12 +565,17 @@ def show_debt_users_menu(chat_id, message_id=None):
     for uid, name in users:
         disp_name = name if name and name != "نەناسراو" else "نەناسراو"
         markup.add(InlineKeyboardButton(f"👤 {disp_name}", callback_data=f"mdebt_u_{uid}"))
-    markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ پانێڵی ئەدمین", callback_data="ap_main"))
+    markup.add(InlineKeyboardButton("❌ داخستن", callback_data="mdebt_close"))
     text = "🛠 **بەڕێوەبردنی قەرزەکان:**\n\nتکایە کڕیارێک هەڵبژێرە:"
     if message_id:
         try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
         except: pass
     else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == 'mdebt_close')
+def mdebt_close_call(call):
+    try: bot.delete_message(call.message.chat.id, call.message.message_id)
+    except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mdebt_u_'))
 def mdebt_user_selected(call):
@@ -759,7 +758,6 @@ def process_direct_buy(call):
         f"🛒 **جۆر:** {history_desc}\n💰 **دۆلار:** {total_usd}$\n💵 **دینار:** {total_iqd:,} د\n📊 **قەرزی نوێ:** {current_debt + total_usd}$ (لە {limit}$)\n━━━━━━━━━━━━━━━━━━━━\n"
         "🎁 **کۆدەکان:** (بۆ کۆپیکردن کرتە بکە)\n\n"
     )
-    # لێرەدا کۆدەکان جیا دەکرێنەوە بۆ کڕیار بەپێی جۆرەکەیان
     receipt += "\n".join([f"▫️ کارتی {x['type']}$: `{x['code']}`" for x in assigned_codes]) + "\n\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
 
     bot.answer_callback_query(call.id, "کڕینەکەت سەرکەوتوو بوو! ✅")
@@ -898,7 +896,7 @@ def setup_bot_commands():
     ]
     
     admin_commands = [
-        BotCommand("admin", "🎛 پانێڵی کۆنترۆڵی ناوەندی"),
+        BotCommand("viewcodes", "📦 بینینی کۆدەکان بە سەربەخۆیی"),
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
         BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
         BotCommand("contact", "📞 پەیوەندیکردن"),
