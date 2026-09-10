@@ -3,6 +3,7 @@ import sqlite3
 import threading
 import datetime
 import time
+import os
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 # تۆکنە نوێیەکەت بە جێگیری لێرەدا دانراوە
@@ -12,7 +13,13 @@ ADMIN_ID = 1229224919
 
 bot.remove_webhook()
 
-conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
+# پاتی نوێی داتابەیسەکە کە دەچێتە ناو ڤۆلیۆمە پارێزراوەکەوە
+DB_PATH = '/app/data/itunes_store_v5.db'
+
+# ئەگەر فۆڵدەرەکە نەبوو، با خۆی دروستی بکات (بۆ دڵنیایی زیاتر)
+os.makedirs('/app/data', exist_ok=True)
+
+conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 db_lock = threading.Lock()
 
 pending_refunds = {}
@@ -86,10 +93,19 @@ def get_main_menu(user_id):
 
 def auto_send_backup():
     try:
-        with open('itunes_store_v5.db', 'rb') as doc:
+        with open(DB_PATH, 'rb') as doc:
             bot.send_document(ADMIN_ID, doc, caption="💾 **باکئەپی ئۆتۆماتیکی داتابەیس**\n(بەهۆی داخستنی فرۆشگاوە بە ئۆتۆماتیکی پارێزرا)", parse_mode='Markdown')
     except Exception as e:
         pass
+
+def auto_periodic_backup():
+    while True:
+        time.sleep(43200) # 43200 چرکە دەکاتە ١٢ کاتژمێر
+        try:
+            with open(DB_PATH, 'rb') as doc:
+                bot.send_document(ADMIN_ID, doc, caption="⏱️ **باکئەپی ١٢ کاتژمێری**\nئەمە بۆ دڵنیایی و پاراستنی زانیارییەکانتە لە ناو سندوقە پارێزراوەکە.", parse_mode='Markdown')
+        except Exception as e:
+            pass
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -431,7 +447,7 @@ def check_all_debts(message):
             bot.reply_to(message, msg, parse_mode='Markdown')
         else: bot.reply_to(message, "هیچ قەرزێک نییە.")
 
-# ================== سیستەمی نوێی سەیرکردنی قەرزی یەک کەس ==================
+# ================== سیستەمی سەیرکردنی قەرزی یەک کەس ==================
 @bot.message_handler(commands=['userdebt'])
 def check_specific_debt_menu(message):
     if message.chat.id == ADMIN_ID:
@@ -493,6 +509,73 @@ def udebt_user_selected(call):
 def udebt_back_call(call):
     show_userdebt_menu(call.message.chat.id, call.message.message_id)
 
+# ================== سیستەمی سەیرکردنی مێژووی کڕیار ==================
+@bot.message_handler(commands=['userhistory'])
+def check_user_history_menu(message):
+    if message.chat.id == ADMIN_ID:
+        show_userhistory_menu(message.chat.id)
+
+def show_userhistory_menu(chat_id, message_id=None):
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT DISTINCT h.user_id, a.name FROM history h LEFT JOIN allowed_users a ON h.user_id = a.user_id')
+        users = c.fetchall()
+    
+    if not users:
+        text = "هیچ مێژوویەکی کڕین بوونی نییە هێشتا."
+        if message_id:
+            try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id)
+            except: pass
+        else: bot.send_message(chat_id, text)
+        return
+
+    markup = InlineKeyboardMarkup(row_width=1)
+    for uid, name in users:
+        disp_name = name if name and name != "نەناسراو" else "نەناسراو"
+        markup.add(InlineKeyboardButton(f"👤 {disp_name}", callback_data=f"uhist_u_{uid}"))
+    markup.add(InlineKeyboardButton("❌ داخستن", callback_data="uhist_close"))
+    
+    text = "📜 **سەیرکردنی مێژووی کڕینەکان:**\n\nتکایە کڕیارێک هەڵبژێرە:"
+    if message_id:
+        try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+    else:
+        bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.callback_query_handler(func=lambda call: call.data == 'uhist_close')
+def uhist_close_call(call):
+    try: bot.delete_message(call.message.chat.id, call.message.message_id)
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('uhist_u_'))
+def uhist_user_selected(call):
+    if call.from_user.id != ADMIN_ID: return
+    uid = int(call.data.split('_')[2])
+    with db_lock:
+        c = conn.cursor()
+        c.execute('SELECT name FROM allowed_users WHERE user_id = ?', (uid,))
+        u_res = c.fetchone()
+        disp_name = u_res[0] if u_res and u_res[0] != "نەناسراو" else "نەناسراو"
+        
+        c.execute('SELECT card_type, price, code, date FROM history WHERE user_id = ? ORDER BY id DESC LIMIT 10', (uid,))
+        hist = c.fetchall()
+        
+    if hist:
+        msg = f"📜 **مێژووی کڕینەکانی:** {disp_name}\n🆔 **ئایدی:** `{uid}`\n\n"
+        for ctype, prc, cd, dt in hist:
+            msg += f"💳 **{ctype}** | {prc:,} د\n🔑 `{cd}`\n📅 {dt}\n------------------\n"
+        
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🔙 گەڕانەوە بۆ لیست", callback_data="uhist_back"))
+        try: bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+        except: pass
+    else:
+        bot.answer_callback_query(call.id, "هیچ کڕینێکی نەکردووە.", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data == 'uhist_back')
+def uhist_back_call(call):
+    show_userhistory_menu(call.message.chat.id, call.message.message_id)
+
 # =========================================================================
 
 @bot.message_handler(commands=['broadcast'])
@@ -534,7 +617,7 @@ def announce_update(message):
 def send_backup(message):
     if message.chat.id == ADMIN_ID:
         try:
-            with open('itunes_store_v5.db', 'rb') as doc:
+            with open(DB_PATH, 'rb') as doc:
                 bot.send_document(message.chat.id, doc, caption="💾 **باکئەپی داتابەیس.**", parse_mode='Markdown')
         except Exception as e: bot.reply_to(message, f"کێشە: {e}")
 
@@ -552,12 +635,12 @@ def handle_database_restore(message):
             downloaded_file = bot.download_file(file_info.file_path)
             with db_lock:
                 conn.close()
-                with open('itunes_store_v5.db', 'wb') as new_file: new_file.write(downloaded_file)
-                conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
+                with open(DB_PATH, 'wb') as new_file: new_file.write(downloaded_file)
+                conn = sqlite3.connect(DB_PATH, check_same_thread=False)
             bot.reply_to(message, "✅ داتابەیس گەڕێندرایەوە.")
         except Exception as e:
             bot.reply_to(message, f"❌ کێشە ڕوویدا: {e}")
-            conn = sqlite3.connect('itunes_store_v5.db', check_same_thread=False)
+            conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 
 @bot.message_handler(commands=['paydebt'])
 def manual_pay_debt(message):
@@ -1013,6 +1096,7 @@ def setup_bot_commands():
     admin_commands = [
         BotCommand("viewcodes", "📦 بینینی کۆدەکان"),
         BotCommand("userdebt", "🆔 بینینی قەرزی یەک کەس"),
+        BotCommand("userhistory", "📜 مێژووی کڕیار"),
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
         BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
         BotCommand("contact", "📞 پەیوەندیکردن"),
@@ -1094,6 +1178,9 @@ def auto_schedule_checker():
 
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
+
+backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
+backup_thread.start()
 
 print("بۆتەکە ئێستا کار دەکات بێ سەبەتە و بە سیستەمی نوێوە...")
 setup_bot_commands()
