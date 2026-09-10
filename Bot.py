@@ -1048,7 +1048,7 @@ def setup_bot_commands():
 
 def auto_schedule_checker():
     while True:
-        now = datetime.datetime.utcnow() + datetime.timedelta(hours=3) 
+        now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=3) 
         current_hm = now.strftime('%H:%M')
         now_time = time.time()
         to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
