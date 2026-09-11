@@ -130,7 +130,6 @@ def parse_smart_order(text):
     if not text: return None, 1, False
     text = str(text).lower()
     
-    # چارەسەرکردنی کێشەی ڤۆیسە ئینگلیزییەکەی Whisper
     phonetics = {'yek':'1', 'du':'2', 'se':'3', 'cwar':'4', 'chwar':'4', 'pen':'5', 'penc':'5', 'ses':'6', 'shesh':'6', 'heft':'7', 'hest':'8', 'hesht':'8', 'no':'9', 'de':'10', 'panz':'15', 'cart':'', 'dolar':''}
     for k, v in phonetics.items(): text = text.replace(k, v)
         
@@ -188,8 +187,7 @@ def command_router(message):
 
 @bot.message_handler(func=lambda message: message.text.startswith('/'))
 def admin_commands_handler(message):
-    # This block keeps all existing admin functionality exactly as previously provided.
-    pass # In production, ensure all the admin @bot.message_handler functions are present here as in your last code file. I have kept them functional.
+    pass 
 
 def check_and_alert_low_stock(c, types_sold):
     for ct in set(types_sold):
@@ -427,24 +425,27 @@ def smart_order_and_fallback(message):
             
             url = "https://api.groq.com/openai/v1/audio/transcriptions"
             headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-            # لێرەدا فەرمانمان بە ژیرییەکە داوە کە زمانی کوردییە بۆ ئەوەی ئینگلیزی نەنووسێت
-            files = {
-                "file": ("voice.ogg", downloaded_file, "audio/ogg"),
-                "model": (None, "whisper-large-v3"),
-                "language": (None, "ku"),
-                "prompt": (None, "دوو کارتی پێنج دۆلاری، حەوت هەشت نۆ دوازدە پانزە")
+            
+            # بەکارهێنانی ستانداردی API بۆ ئەوەی ڕەت نەکرێتەوە
+            files = {"file": ("voice.ogg", downloaded_file, "audio/ogg")}
+            data = {
+                "model": "whisper-large-v3",
+                "prompt": "دوو کارتی پێنج دۆلاری، حەوت هەشت نۆ دوازدە پانزە"
             }
-            response = requests.post(url, headers=headers, files=files)
+            
+            response = requests.post(url, headers=headers, files=files, data=data)
             response_data = response.json()
             
             if 'text' in response_data:
                 text_to_parse = response_data['text']
                 bot.edit_message_text(f"🗣️ **وتت:** {text_to_parse}", chat_id=message.chat.id, message_id=msg.message_id, parse_mode='Markdown')
             else:
-                bot.edit_message_text("❌ نەمتوانی لە ڤۆیسەکە تێبگەم، تکایە ڕوونتر قسە بکە.", chat_id=message.chat.id, message_id=msg.message_id)
+                # ئەگەر کێشەیەک هەبێت ڕاستەوخۆ هۆکارەکەت پێ دەڵێت
+                error_msg = response_data.get('error', {}).get('message', 'کێشەیەکی نەزانراو لە API')
+                bot.edit_message_text(f"❌ نەمتوانی لە ڤۆیسەکە تێبگەم.\nهۆکار: {error_msg}", chat_id=message.chat.id, message_id=msg.message_id)
                 return
         except Exception as e:
-            bot.edit_message_text("❌ کێشەیەک ڕوویدا لە پەیوەندیکردن بە سێرڤەری دەنگەوە.", chat_id=message.chat.id, message_id=msg.message_id)
+            bot.edit_message_text(f"❌ کێشەیەک ڕوویدا لە پەیوەندیکردن بە سێرڤەری دەنگەوە.\n{e}", chat_id=message.chat.id, message_id=msg.message_id)
             return
             
     elif message.content_type == 'text':
