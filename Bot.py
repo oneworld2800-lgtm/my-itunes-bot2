@@ -5,11 +5,9 @@ import datetime
 import time
 import os
 import re
-import requests
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
-GROQ_API_KEY = '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'
 ADMIN_ID = 1229224919
 
 bot = telebot.TeleBot(TOKEN)
@@ -43,7 +41,6 @@ init_db()
 
 prices = {'2': 3000, '3': 4500, '4': 6000, '5': 7000, '10': 14000, '15': 22000}
 
-# ئەلگۆریتمی دۆزینەوەی باشترین تێکەڵەی کارتەکان لە کۆگا
 def get_dynamic_combo(c, target_val, qty=1):
     available_cards = [15, 10, 5, 4, 3, 2]
     
@@ -130,9 +127,6 @@ def parse_smart_order(text):
     if not text: return None, 1, False
     text = str(text).lower()
     
-    phonetics = {'yek':'1', 'du':'2', 'se':'3', 'cwar':'4', 'chwar':'4', 'pen':'5', 'penc':'5', 'ses':'6', 'shesh':'6', 'heft':'7', 'hest':'8', 'hesht':'8', 'no':'9', 'de':'10', 'panz':'15', 'cart':'', 'dolar':''}
-    for k, v in phonetics.items(): text = text.replace(k, v)
-        
     kurdish_nums = {'١':'1','٢':'2','٣':'3','٤':'4','٥':'5','٦':'6','٧':'7','٨':'8','٩':'9','٠':'0'}
     for k, v in kurdish_nums.items(): text = text.replace(k, v)
     text = text.replace('دوو', '2').replace('یەک', '1').replace('سێ', '3').replace('چوار', '4').replace('پێنج', '5').replace('شەش', '6').replace('حەوت', '7').replace('هەشت', '8').replace('نۆ', '9').replace('دە', '10').replace('پانزە', '15')
@@ -176,11 +170,10 @@ def cancel_smart_order(call):
 def send_welcome(message):
     user_id = message.from_user.id
     if is_allowed(user_id):
-        welcome_text = "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس. 🍏\n\nئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت.\n\nتکایە لە دوگمەکانی خوارەوە هەڵبژێرە، یان ڕاستەوخۆ بە ڤۆیس و نووسین (بۆ نموونە: 2 کارتی 5 دۆلاری یان 13) داواکارییەکەت بنێرە:"
+        welcome_text = "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس. 🍏\n\nئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت.\n\nتکایە لە دوگمەکانی خوارەوە هەڵبژێرە، یان ڕاستەوخۆ بە نووسین (بۆ نموونە: 2 کارتی 5 یان 13) داواکارییەکەت بنێرە:"
         bot.reply_to(message, welcome_text, reply_markup=get_main_menu(user_id), parse_mode='Markdown')
     else: bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە.\nئایدی تۆ: `{user_id}`")
 
-# ================== فەرمانەکانی ئەدمین ==================
 @bot.message_handler(commands=['about', 'contact', 'viewcodes', 'autoclose', 'close', 'open', 'allow', 'remove', 'setname', 'ban', 'unban', 'users', 'add', 'delcode', 'clearcodes', 'setlimit', 'stock', 'debts', 'userdebt', 'userhistory', 'broadcast', 'update', 'backup', 'restore', 'paydebt', 'clear', 'editdebt'])
 def command_router(message):
     bot.reply_to(message, "فەرمانەکانی ئەدمین بەتەواوی کار دەکەن. ئەگەر کێشەت لە بەکارهێنانیان هەیە دڵنیابە بە شێوەی ڕاستەوخۆ بەکاری دەهێنیت.")
@@ -404,7 +397,7 @@ def handle_text_buttons(message):
     elif message.text == "✅ قەرزەکەم داوەتەوە":
         bot.reply_to(message, "⏳ داواکارییەکەت نێردرا بۆ خاوەن فرۆشگا. تکایە چاوەڕێی وەڵام بە...")
 
-# ================== سیستەمی نوێی تێگەیشتن لە ڤۆیس و نووسینی خێرا ==================
+# ================== سیستەمی نوێی تێگەیشتن لە نووسینی خێرا ==================
 @bot.message_handler(content_types=['text', 'voice'])
 def smart_order_and_fallback(message):
     uid = message.from_user.id
@@ -415,42 +408,13 @@ def smart_order_and_fallback(message):
         bot.reply_to(message, f"🚫 **فرۆشگا داخراوە**\n\n{reason}", parse_mode='Markdown')
         return
 
-    text_to_parse = ""
-    
+    # ئەگەر بەکارهێنەر ڤۆیسی نارد
     if message.content_type == 'voice':
-        msg = bot.reply_to(message, "🎙️ خەریکی گوێگرتنم لە ڤۆیسەکەت...")
-        try:
-            file_info = bot.get_file(message.voice.file_id)
-            downloaded_file = bot.download_file(file_info.file_path)
-            
-            url = "https://api.groq.com/openai/v1/audio/transcriptions"
-            headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-            
-            # بەکارهێنانی ستانداردی API بۆ ئەوەی ڕەت نەکرێتەوە
-            files = {"file": ("voice.ogg", downloaded_file, "audio/ogg")}
-            data = {
-                "model": "whisper-large-v3",
-                "prompt": "دوو کارتی پێنج دۆلاری، حەوت هەشت نۆ دوازدە پانزە"
-            }
-            
-            response = requests.post(url, headers=headers, files=files, data=data)
-            response_data = response.json()
-            
-            if 'text' in response_data:
-                text_to_parse = response_data['text']
-                bot.edit_message_text(f"🗣️ **وتت:** {text_to_parse}", chat_id=message.chat.id, message_id=msg.message_id, parse_mode='Markdown')
-            else:
-                # ئەگەر کێشەیەک هەبێت ڕاستەوخۆ هۆکارەکەت پێ دەڵێت
-                error_msg = response_data.get('error', {}).get('message', 'کێشەیەکی نەزانراو لە API')
-                bot.edit_message_text(f"❌ نەمتوانی لە ڤۆیسەکە تێبگەم.\nهۆکار: {error_msg}", chat_id=message.chat.id, message_id=msg.message_id)
-                return
-        except Exception as e:
-            bot.edit_message_text(f"❌ کێشەیەک ڕوویدا لە پەیوەندیکردن بە سێرڤەری دەنگەوە.\n{e}", chat_id=message.chat.id, message_id=msg.message_id)
-            return
-            
-    elif message.content_type == 'text':
-        if message.text.startswith('/'): return
-        text_to_parse = message.text
+        bot.reply_to(message, "🎙️ ببورە، تایبەتمەندی ڤۆیس لە ئێستادا ڕاگیراوە. تکایە بە نووسین داواکارییەکەت بنێرە (بۆ نموونە بنووسە: 13 یان 2 دانە 5).")
+        return
+
+    if message.text.startswith('/'): return
+    text_to_parse = message.text
         
     target, qty, is_mixed = parse_smart_order(text_to_parse)
     
@@ -472,8 +436,7 @@ def smart_order_and_fallback(message):
             total_iqd = qty * prices.get(str(target), 0)
             bot.send_message(message.chat.id, f"🛒 **پێشنیاری زیرەک:**\n\nتۆ داوای **{qty}** کارتی جۆری **{target}$** دەکەیت.\nکۆی گشتی: **{total_usd}$ ({total_iqd:,} دینار)**\n\nئایا دەتەوێت ڕاستەوخۆ بیکڕیت؟", reply_markup=markup, parse_mode='Markdown')
     else:
-        if message.content_type == 'text':
-            bot.reply_to(message, "🔄 مێنوی دوگمەکانت نوێکرایەوە.\nتێبینی: دەتوانیت ڤۆیس بنێریت یان ژمارە بنووسیت (وەک: 13 یان 5 2).", reply_markup=get_main_menu(uid))
+        bot.reply_to(message, "🔄 مێنوی دوگمەکانت نوێکرایەوە.\nتێبینی: دەتوانیت ڕاستەوخۆ ژمارە بنووسیت (وەک: 13 یان 5 2).", reply_markup=get_main_menu(uid))
 
 def setup_bot_commands():
     user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")]
@@ -492,6 +455,6 @@ checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("بۆتەکە ئێستا بەتەواوی کار دەکات...")
+print("بۆتەکە ئێستا بەتەواوی کار دەکات بێ سیستەمی ڤۆیس...")
 setup_bot_commands()
 bot.infinity_polling()
