@@ -96,7 +96,6 @@ def get_main_menu(user_id):
     markup.add(KeyboardButton("🛒 کڕینی کارت"), KeyboardButton("🔀 کارتی ئایتونسی زیاتر"))
     markup.add(KeyboardButton("💰 قەرزەکانم"), KeyboardButton("👛 جزدانەکەم"))
     markup.add(KeyboardButton("📜 مێژووی کڕینەکان"), KeyboardButton("📦 ئاماری کۆگا"))
-    # دوگمەکەی قەرزەکەم داوەتەوە گەڕێندرایەوە!
     markup.add(KeyboardButton("✅ قەرزەکەم داوەتەوە")) 
     return markup
 
@@ -179,7 +178,7 @@ def send_welcome(message):
     else: bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە.\nئایدی تۆ: `{user_id}`")
 
 
-# ================== سەرجەم ٢٥ فەرمانەکانی ئەدمین (پارێزراو) ==================
+# ================== سەرجەم ٢٥ فەرمانەکانی ئەدمین ==================
 
 @bot.message_handler(commands=['about'])
 def about_store(message):
@@ -754,7 +753,6 @@ def broadcast(message):
             bot.reply_to(message, f"نامەکە بۆ {count} بەکارهێنەر نێردرا.")
         else: bot.reply_to(message, "تکایە دەق بنووسە: /broadcast پەیامەکەت لێرە")
 
-# ئەم فەرمانە چارەسەری هەموو کێشەکانی نوێبوونەوەی دوگمەکان دەکات بێ ئەوەی کڕیار پەنجە بە ستارت بدات
 @bot.message_handler(commands=['update'])
 def announce_update(message):
     if message.chat.id == ADMIN_ID:
@@ -767,7 +765,6 @@ def announce_update(message):
             count = 0
             for (uid,) in users:
                 try:
-                    # ناردنی نامەکە وە لە هەمان کاتدا مێنووی نوێیان پێ دەدات
                     bot.send_message(uid, f"✨ **نوێکاری لە فرۆشگا!** ✨\n\n{text}", parse_mode='Markdown', reply_markup=get_main_menu(uid))
                     count += 1
                 except: pass
@@ -843,6 +840,29 @@ def reject_wallet(call):
     target_uid = int(call.data.split('_')[2])
     bot.edit_message_text(f"{call.message.text}\n\n❌ **ڕەتکرایەوە.**", chat_id=call.message.chat.id, message_id=call.message.message_id)
     try: bot.send_message(target_uid, "❌ داواکاری پڕکردنەوەی جزدانەکەت ڕەتکرایەوە لەلایەن خاوەن فرۆشگاوە.")
+    except: pass
+
+# ================== پەسەندکردنی قەرزدانەوەی کڕیار ==================
+@bot.callback_query_handler(func=lambda call: call.data.startswith('confirm_pay_'))
+def confirm_debt_payment(call):
+    if call.from_user.id != ADMIN_ID: return
+    target_uid = int(call.data.split('_')[2])
+    
+    with db_lock:
+        c = conn.cursor()
+        c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (target_uid,))
+        conn.commit()
+        
+    bot.edit_message_text(f"{call.message.text}\n\n✅ **پەسەند کرا و قەرزەکەی سفر کرایەوە.**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    try: bot.send_message(target_uid, "🎉 پیرۆزە! خاوەن فرۆشگا پشتڕاستی کردەوە کە قەرزەکەت داوەتەوە و ئێستا قەرزەکانت سفر کرانەوە.")
+    except: pass
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('reject_pay_'))
+def reject_debt_payment(call):
+    if call.from_user.id != ADMIN_ID: return
+    target_uid = int(call.data.split('_')[2])
+    bot.edit_message_text(f"{call.message.text}\n\n❌ **ڕەتکرایەوە.**", chat_id=call.message.chat.id, message_id=call.message.message_id)
+    try: bot.send_message(target_uid, "❌ خاوەن فرۆشگا داواکاری سفرکردنەوەی قەرزەکەی ڕەتکردەوە.")
     except: pass
 
 # ================== بەشی کڕین و سەبەتە ==================
@@ -1052,9 +1072,7 @@ def handle_text_buttons(message):
     uid = message.from_user.id
     if not is_allowed(uid): return
 
-    # نوێکردنەوەی مێنووی کڕیار لە کاتی هەر مامەڵەیەک ئەگەر نوێ نەبێت
     current_markup = get_main_menu(uid)
-
     status, reason = get_store_status()
     if status == "closed" and "کڕین" in message.text:
         bot.reply_to(message, f"🚫 **فرۆشگا داخراوە**\n\n{reason}", parse_mode='Markdown', reply_markup=current_markup)
@@ -1067,7 +1085,7 @@ def handle_text_buttons(message):
             if i+1 < len(buttons): markup.add(buttons[i], buttons[i+1])
             else: markup.add(buttons[i])
         bot.reply_to(message, "💳 **کڕینی کارت**\nتکایە جۆری کارت هەڵبژێرە:", reply_markup=markup, parse_mode='Markdown')
-        bot.send_message(message.chat.id, "🔄", reply_markup=current_markup) # دڵنیابوونەوە لە مانەوەی مێنووەکە
+        bot.send_message(message.chat.id, "🔄", reply_markup=current_markup)
 
     elif message.text == "🔀 کارتی ئایتونسی زیاتر":
         markup = InlineKeyboardMarkup(row_width=2)
@@ -1121,7 +1139,22 @@ def handle_text_buttons(message):
         
     elif message.text == "✅ قەرزەکەم داوەتەوە":
         bot.reply_to(message, "⏳ داواکارییەکەت نێردرا بۆ خاوەن فرۆشگا.", reply_markup=current_markup)
-        try: bot.send_message(ADMIN_ID, f"🔔 کڕیارێک بە ناوی {message.from_user.first_name} (`{uid}`) دەڵێت قەرزەکەم داوەتەوە. تکایە سەیری بکە.", parse_mode='Markdown')
+        
+        # دروستکردنی دوگمەی پەسەندکردن بۆ ئەدمین
+        markup = InlineKeyboardMarkup()
+        markup.add(
+            InlineKeyboardButton("✅ بەڵێ (سفرکردنەوە)", callback_data=f"confirm_pay_{uid}"),
+            InlineKeyboardButton("❌ نەخێر", callback_data=f"reject_pay_{uid}")
+        )
+        
+        with db_lock:
+            c = conn.cursor()
+            c.execute('SELECT usd, iqd FROM debts WHERE user_id = ?', (uid,))
+            res = c.fetchone()
+            debt_info = f"{res[0]}$ ({res[1]:,} دینار)" if res else "0$"
+
+        try: 
+            bot.send_message(ADMIN_ID, f"🔔 **ئاگاداری دانەوەی قەرز:**\n\nکڕیار: {message.from_user.first_name} (`{uid}`)\nقەرزی لەسەرە: **{debt_info}**\n\nئایا ئەم کڕیارە قەرزەکەی داوەتەوە؟", parse_mode='Markdown', reply_markup=markup)
         except: pass
 
 @bot.message_handler(content_types=['text', 'voice'])
@@ -1164,7 +1197,6 @@ def smart_order_and_fallback(message):
         bot.send_message(message.chat.id, f"🛒 **پێشنیاری زیرەک:**\n\nتۆ داوای **{qty}** داواکاری جۆری **{target}$** دەکەیت.\nکۆی گشتی: **{total_iqd:,} دینار**\n\nتکایە شێوازی پارەدان هەڵبژێرە:", reply_markup=markup, parse_mode='Markdown')
         bot.send_message(message.chat.id, "🔄", reply_markup=current_markup)
     else:
-        # ئەگەر شتێکی سەیر بنووسن کە لێی تێ نەگەیشت، ڕاستەوخۆ مێنووەکەیان بۆ نوێ دەکاتەوە
         bot.reply_to(message, "🔄 مێنوی دوگمەکانت نوێکرایەوە.\nتێبینی: دەتوانیت ڕاستەوخۆ ژمارە بنووسیت (وەک: 13 یان 5 2).", reply_markup=current_markup)
 
 def setup_bot_commands():
@@ -1184,6 +1216,6 @@ checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. هەموو ٢٥ فەرمانەکان جێگیرکراون و دوگمەی قەرز گەڕێندراوەتەوە.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. هەموو فەرمانەکان جێگیرکراون و دوگمەکانی قەرزدانەوە گەڕێندراونەتەوە.")
 setup_bot_commands()
 bot.infinity_polling()
