@@ -5,7 +5,7 @@ import datetime
 import time
 import os
 import re
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
 ADMIN_ID = 1229224919
@@ -75,7 +75,7 @@ def get_dynamic_combo(c, target_val, qty=1):
     return None
 
 def is_allowed(user_id):
-    if user_id == ADMIN_ID: return True
+    if str(user_id) == str(ADMIN_ID): return True
     with db_lock:
         c = conn.cursor()
         c.execute('SELECT user_id FROM allowed_users WHERE user_id = ?', (user_id,))
@@ -96,9 +96,7 @@ def get_main_menu(user_id):
     markup.add(KeyboardButton("💰 قەرزەکانم"), KeyboardButton("👛 جزدانەکەم"))
     markup.add(KeyboardButton("📜 مێژووی کڕینەکان"), KeyboardButton("📦 ئاماری کۆگا"))
     markup.add(KeyboardButton("✅ قەرزەکەم داوەتەوە")) 
-    if user_id == ADMIN_ID:
-        markup.add(KeyboardButton("🛠 دەفتەری قەرزەکان"), KeyboardButton("💼 دەفتەری جزدانەکان"))
-        markup.add(KeyboardButton("👥 لیستی قەرزارەکان"), KeyboardButton("💳 جزدانە پڕەکان"))
+    # هیچ دوگمەیەکی تێکەڵ لێرە نابێت، هەمووی چووە ناو مێنوو
     return markup
 
 def auto_periodic_backup():
@@ -107,6 +105,10 @@ def auto_periodic_backup():
         try:
             with open(DB_PATH, 'rb') as doc: bot.send_document(ADMIN_ID, doc, caption="⏱️ **باکئەپی ١٢ کاتژمێری**", parse_mode='Markdown')
         except Exception: pass
+
+@bot.message_handler(commands=['myid'])
+def check_my_id(message):
+    bot.reply_to(message, f"ئایدی تۆ بریتییە لە: `{message.from_user.id}`\nئایدی ئەدمین بریتییە لە: `{ADMIN_ID}`", parse_mode='Markdown')
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -133,9 +135,30 @@ def forward_to_admin(message):
     except: pass
     bot.reply_to(message, "نامەکەت نێردرا. ✅")
 
+@bot.message_handler(commands=['autoclose'])
+def set_autoclose(message):
+    if str(message.chat.id) == str(ADMIN_ID):
+        args = message.text.split()
+        if len(args) == 2 and args[1].lower() == "off":
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE settings SET value="0" WHERE key="auto_close_enabled"')
+                conn.commit()
+            bot.reply_to(message, "✅ سیستەمی داخستنی ئۆتۆماتیکی ڕاگیرا.")
+        elif len(args) == 3:
+            start_t, end_t = args[1], args[2]
+            with db_lock:
+                c = conn.cursor()
+                c.execute('UPDATE settings SET value="1" WHERE key="auto_close_enabled"')
+                c.execute('UPDATE settings SET value=? WHERE key="auto_close_start"', (start_t,))
+                c.execute('UPDATE settings SET value=? WHERE key="auto_close_end"', (end_t,))
+                conn.commit()
+            bot.reply_to(message, f"✅ سیستەمی ئۆتۆماتیکی چالاککرا لە {start_t} بۆ {end_t}.")
+        else: bot.reply_to(message, "شێواز هەڵەیە: /autoclose 00:00 08:00 یان /autoclose off")
+
 @bot.message_handler(commands=['close'])
 def close_store(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         reason = message.text.replace('/close', '').strip()
         if not reason: reason = "لە ئێستادا فرۆشگا داخراوە."
         with db_lock:
@@ -147,7 +170,7 @@ def close_store(message):
 
 @bot.message_handler(commands=['open'])
 def open_store(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('UPDATE settings SET value=? WHERE key="store_status"', ("open",))
@@ -156,7 +179,7 @@ def open_store(message):
 
 @bot.message_handler(commands=['allow'])
 def allow_user(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             parts = message.text.split()
             new_uid = int(parts[1])
@@ -171,7 +194,7 @@ def allow_user(message):
         
 @bot.message_handler(commands=['remove'])
 def remove_user(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             tid = int(message.text.replace('/remove ', '').strip())
             with db_lock:
@@ -183,7 +206,7 @@ def remove_user(message):
 
 @bot.message_handler(commands=['setname'])
 def set_user_name(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             parts = message.text.split(maxsplit=2)
             target_id, new_name = int(parts[1]), parts[2]
@@ -194,9 +217,39 @@ def set_user_name(message):
             bot.reply_to(message, f"✅ ناوی {target_id} گۆڕدرا بۆ: **{escape_md(new_name)}**", parse_mode='Markdown')
         except: bot.reply_to(message, "شێواز هەڵەیە: /setname 123 ناو")
 
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if str(message.chat.id) == str(ADMIN_ID):
+        try:
+            parts = message.text.split()
+            target_id, duration_str = int(parts[1]), parts[2]
+            duration_val, duration_unit = int(duration_str[:-1]), duration_str[-1].lower()
+            now = datetime.datetime.now()
+            if duration_unit == 'h': ban_until = now + datetime.timedelta(hours=duration_val)
+            elif duration_unit == 'd': ban_until = now + datetime.timedelta(days=duration_val)
+            else: raise ValueError
+            with db_lock:
+                c = conn.cursor()
+                c.execute('INSERT OR REPLACE INTO bans (user_id, ban_until) VALUES (?, ?)', (target_id, ban_until.strftime('%Y-%m-%d %H:%M:%S')))
+                conn.commit()
+            bot.reply_to(message, f"کڕیار {target_id} سزادرا.")
+        except: bot.reply_to(message, "شێواز هەڵەیە: /ban 123 5h")
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if str(message.chat.id) == str(ADMIN_ID):
+        try:
+            target_id = int(message.text.replace('/unban ', '').strip())
+            with db_lock:
+                c = conn.cursor()
+                c.execute('DELETE FROM bans WHERE user_id = ?', (target_id,))
+                conn.commit()
+            bot.reply_to(message, f"سزای {target_id} لابرا.")
+        except: bot.reply_to(message, "شێواز هەڵەیە: /unban 123")
+
 @bot.message_handler(commands=['users'])
 def list_users(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT user_id, name FROM allowed_users')
@@ -210,7 +263,7 @@ def list_users(message):
 
 @bot.message_handler(commands=['add'])
 def add_codes(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             lines = message.text.split('\n')
             ctype = lines[0].split()[1]
@@ -225,7 +278,7 @@ def add_codes(message):
 
 @bot.message_handler(commands=['viewcodes'])
 def view_codes_cmd(message):
-    if message.chat.id == ADMIN_ID: send_viewcodes_panel(message.chat.id)
+    if str(message.chat.id) == str(ADMIN_ID): send_viewcodes_panel(message.chat.id)
 
 def send_viewcodes_panel(chat_id, message_id=None):
     with db_lock:
@@ -246,7 +299,7 @@ def send_viewcodes_panel(chat_id, message_id=None):
 def vc_callback_handler(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     action = call.data.split('_')[1]
     if action == 'main': send_viewcodes_panel(call.message.chat.id, call.message.message_id)
     elif action == 'show':
@@ -266,7 +319,7 @@ def vc_callback_handler(call):
 
 @bot.message_handler(commands=['delcode'])
 def manage_codes(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
@@ -282,7 +335,7 @@ def manage_codes(message):
 def handle_delcode_callbacks(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     if call.data == 'delcode_back':
         manage_codes(call.message)
         try: bot.delete_message(call.message.chat.id, call.message.message_id)
@@ -311,7 +364,7 @@ def handle_delcode_callbacks(call):
 
 @bot.message_handler(commands=['clearcodes'])
 def clear_codes(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             target = message.text.replace('/clearcodes ', '').strip()
             with db_lock:
@@ -324,7 +377,7 @@ def clear_codes(message):
 
 @bot.message_handler(commands=['setlimit'])
 def set_limit(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         try:
             parts = message.text.split()
             tid, nlimit = int(parts[1]), int(parts[2])
@@ -337,7 +390,7 @@ def set_limit(message):
 
 @bot.message_handler(commands=['stock'])
 def check_stock(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT card_type, COUNT(*) FROM codes GROUP BY card_type')
@@ -350,7 +403,7 @@ def check_stock(message):
 
 @bot.message_handler(commands=['debts'])
 def check_all_debts(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT d.user_id, d.usd, d.iqd, d.credit_limit, a.name FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id WHERE d.usd > 0')
@@ -367,7 +420,7 @@ def check_all_debts(message):
 
 @bot.message_handler(commands=['wallets'])
 def check_all_wallets(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         with db_lock:
             c = conn.cursor()
             c.execute('SELECT d.user_id, d.wallet_iqd, a.name FROM debts d LEFT JOIN allowed_users a ON d.user_id = a.user_id WHERE d.wallet_iqd > 0')
@@ -396,6 +449,10 @@ def show_wallet_users_menu(chat_id, message_id=None):
         except: pass
     else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
+@bot.message_handler(commands=['editwallet'])
+def editwallet_command(message):
+    if str(message.chat.id) == str(ADMIN_ID): show_wallet_users_menu(message.chat.id)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mwal_u_'))
 def mwal_user_selected(call):
     try: bot.answer_callback_query(call.id)
@@ -423,7 +480,7 @@ def mwal_back_call(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mwal_clear_'))
 def mwal_clear_action(call):
-    try: bot.answer_callback_query(call.id, "جزدان سفر کرایەوە ✅")
+    try: bot.answer_callback_query(call.id, "جزدان سفر کرایەوە ✅", show_alert=True)
     except: pass
     uid = int(call.data.split('_')[2])
     with db_lock:
@@ -450,7 +507,7 @@ def mwal_action_selected(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('mwal_do_'))
 def mwal_do_action(call):
-    try: bot.answer_callback_query(call.id, "سەرکەوتوو بوو ✅")
+    try: bot.answer_callback_query(call.id, "سەرکەوتوو بوو ✅", show_alert=True)
     except: pass
     parts = call.data.split('_')
     uid, action, amt = int(parts[2]), parts[3], int(parts[4])
@@ -483,11 +540,26 @@ def show_clear_debt_menu(chat_id, message_id=None):
         else: bot.send_message(chat_id, text, reply_markup=markup)
     else: bot.send_message(chat_id, "هیچ قەرزێک نییە.")
 
+@bot.message_handler(commands=['clear'])
+def clear_debt(message):
+    if str(message.chat.id) == str(ADMIN_ID):
+        try:
+            tid = message.text.replace('/clear', '').strip()
+            if tid:
+                with db_lock:
+                    c = conn.cursor()
+                    if tid.lower() == 'all': c.execute('UPDATE debts SET usd = 0, iqd = 0')
+                    else: c.execute('UPDATE debts SET usd = 0, iqd = 0 WHERE user_id = ?', (int(tid),))
+                    conn.commit()
+                bot.reply_to(message, "✅ قەرزەکان سفر کرانەوە.")
+            else: show_clear_debt_menu(message.chat.id)
+        except: bot.reply_to(message, "شێواز: /clear ID یان /clear all")
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('cd_'))
 def handle_clear_debt_callback(call):
-    try: bot.answer_callback_query(call.id, "قەرزەکان سفر کرانەوە! ✅")
+    try: bot.answer_callback_query(call.id, "قەرزەکان سفر کرانەوە! ✅", show_alert=True)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     action = call.data.split('_')[1]
     if action == 'all':
         with db_lock:
@@ -517,6 +589,10 @@ def show_debt_users_menu(chat_id, message_id=None):
         try: bot.edit_message_text(text, chat_id=chat_id, message_id=message_id, reply_markup=markup, parse_mode='Markdown')
         except: pass
     else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
+
+@bot.message_handler(commands=['editdebt'])
+def editdebt_command(message):
+    if str(message.chat.id) == str(ADMIN_ID): show_debt_users_menu(message.chat.id)
 
 @bot.callback_query_handler(func=lambda call: call.data == 'delete_msg')
 def delete_message_handler(call):
@@ -548,7 +624,7 @@ def mdebt_user_selected(call):
 def mdebt_clear_action(call):
     try: bot.answer_callback_query(call.id, "قەرز سفر کرایەوە! ✅", show_alert=True)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     uid = int(call.data.split('_')[2])
     with db_lock:
         c = conn.cursor()
@@ -581,7 +657,7 @@ def mdebt_action_selected(call):
 def mdebt_do_action(call):
     try: bot.answer_callback_query(call.id, "سەرکەوتوو بوو! ✅", show_alert=True)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     parts = call.data.split('_')
     uid, action, ctype = int(parts[2]), parts[3], parts[4]
     amount_usd, amount_iqd = int(ctype), prices.get(ctype, 0)
@@ -618,11 +694,15 @@ def show_userhistory_menu(chat_id, message_id=None):
         except: pass
     else: bot.send_message(chat_id, text, reply_markup=markup, parse_mode='Markdown')
 
+@bot.message_handler(commands=['userhistory'])
+def check_user_history_menu(message):
+    if str(message.chat.id) == str(ADMIN_ID): show_userhistory_menu(message.chat.id)
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith('uhist_u_'))
 def uhist_user_selected(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     uid = int(call.data.split('_')[2])
     with db_lock:
         c = conn.cursor()
@@ -650,7 +730,7 @@ def uhist_back_call(call):
 
 @bot.message_handler(commands=['broadcast'])
 def broadcast(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         text = message.text.replace('/broadcast', '').strip()
         if text:
             with db_lock:
@@ -666,7 +746,7 @@ def broadcast(message):
 
 @bot.message_handler(commands=['update'])
 def announce_update(message):
-    if message.chat.id == ADMIN_ID:
+    if str(message.chat.id) == str(ADMIN_ID):
         text = message.text.replace('/update', '').strip()
         if text:
             with db_lock:
@@ -682,6 +762,32 @@ def announce_update(message):
             bot.reply_to(message, f"✅ نامەی نوێکاری و مێنووی نوێ بۆ {count} کڕیار نێردرا.")
         else: bot.reply_to(message, "تکایە دەق بنووسە: /update پەیامەکەت")
 
+@bot.message_handler(commands=['backup'])
+def send_backup(message):
+    if str(message.chat.id) == str(ADMIN_ID):
+        try:
+            with open(DB_PATH, 'rb') as doc: bot.send_document(message.chat.id, doc, caption="💾 داتابەیس")
+        except Exception as e: bot.reply_to(message, f"کێشە: {e}")
+
+@bot.message_handler(commands=['restore'])
+def restore_instructions(message):
+    if str(message.chat.id) == str(ADMIN_ID): bot.reply_to(message, "تەنها فایلی `itunes_store_v5.db` بنێرە بۆ گەڕاندنەوە.")
+
+@bot.message_handler(content_types=['document'])
+def handle_database_restore(message):
+    global conn
+    if str(message.chat.id) == str(ADMIN_ID) and message.document.file_name.endswith('.db'):
+        try:
+            file_info = bot.get_file(message.document.file_id)
+            downloaded_file = bot.download_file(file_info.file_path)
+            with db_lock:
+                conn.close()
+                with open(DB_PATH, 'wb') as new_file: new_file.write(downloaded_file)
+                conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+            bot.reply_to(message, "✅ داتابەیس گەڕێندرایەوە.")
+        except: bot.reply_to(message, "❌ کێشە ڕوویدا.")
+
+# ================== بەشی جزدان و قەرزدانەوە ==================
 @bot.callback_query_handler(func=lambda call: call.data == 'add_wallet_req')
 def add_wallet_req(call):
     try: bot.answer_callback_query(call.id)
@@ -710,7 +816,7 @@ def process_wallet_req(message):
 def approve_wallet(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     target_uid = int(call.data.split('_')[2])
     amount = int(call.data.split('_')[3])
     
@@ -728,7 +834,7 @@ def approve_wallet(call):
 def reject_wallet(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     target_uid = int(call.data.split('_')[2])
     try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ڕەتکرایەوە.**", chat_id=call.message.chat.id, message_id=call.message.message_id)
     except: pass
@@ -739,7 +845,7 @@ def reject_wallet(call):
 def confirm_debt_payment(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     target_uid = int(call.data.split('_')[2])
     
     with db_lock:
@@ -756,7 +862,7 @@ def confirm_debt_payment(call):
 def reject_debt_payment(call):
     try: bot.answer_callback_query(call.id)
     except: pass
-    if call.from_user.id != ADMIN_ID: return
+    if str(call.from_user.id) != str(ADMIN_ID): return
     target_uid = int(call.data.split('_')[2])
     try: bot.edit_message_text(f"{call.message.text}\n\n❌ **ڕەتکرایەوە.**", chat_id=call.message.chat.id, message_id=call.message.message_id)
     except: pass
@@ -1056,36 +1162,59 @@ def handle_all_texts(message):
         try: bot.send_message(ADMIN_ID, f"🔔 **ئاگاداری دانەوەی قەرز:**\n\nکڕیار: {escape_md(message.from_user.first_name)} (`{uid}`)\nقەرزی لەسەرە: **{debt_info}**\n\nئایا ئەم کڕیارە قەرزەکەی داوەتەوە؟", parse_mode='Markdown', reply_markup=markup)
         except: pass
 
-    elif message.text == "🛠 دەفتەری قەرزەکان" and uid == ADMIN_ID:
-        show_debt_users_menu(message.chat.id)
-    elif message.text == "💼 دەفتەری جزدانەکان" and uid == ADMIN_ID:
-        show_wallet_users_menu(message.chat.id)
-    elif message.text == "👥 لیستی قەرزارەکان" and uid == ADMIN_ID:
-        check_all_debts(message)
-    elif message.text == "💳 جزدانە پڕەکان" and uid == ADMIN_ID:
-        check_all_wallets(message)
-
     else:
         if message.text.startswith('/'): return
         bot.reply_to(message, "تکایە تەنها لە ڕێگەی دوگمەکانی خوارەوە داواکارییەکەت هەڵبژێرە.", reply_markup=current_markup)
 
 def setup_bot_commands():
-    user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")]
-    try: bot.set_my_commands(user_commands)
+    user_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")
+    ]
+    try: bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
     except: pass
 
-def auto_schedule_checker():
-    while True:
-        now_time = time.time()
-        to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
-        for rid in to_delete: del pending_refunds[rid]
-        time.sleep(30)
+    admin_commands = [
+        BotCommand("start", "🚀 دەستپێکردنی بۆت"),
+        BotCommand("about", "ℹ️ دەربارەی فرۆشگا"),
+        BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا"),
+        BotCommand("allow", "✅ ڕێگەپێدان بە کڕیار"),
+        BotCommand("remove", "❌ سڕینەوەی کڕیار"),
+        BotCommand("setname", "✏️ گۆڕینی ناوی کڕیار"),
+        BotCommand("ban", "🚫 سزادانی کڕیار"),
+        BotCommand("unban", "♻️ لابردنی سزا"),
+        BotCommand("users", "👥 لیستی کڕیارەکان"),
+        BotCommand("debts", "📒 لیستی قەرزەکان"),
+        BotCommand("editdebt", "🛠 دەستکاریکردنی قەرز"),
+        BotCommand("paydebt", "💵 دانەوەی قەرز بە دەستی"),
+        BotCommand("clear", "💸 سفرکردنەوەی قەرز"),
+        BotCommand("wallets", "💳 لیستی جزدانەکان"),
+        BotCommand("editwallet", "👛 دەستکاریکردنی جزدان"),
+        BotCommand("userdebt", "🆔 بینینی قەرزی یەک کەس"),
+        BotCommand("userhistory", "📜 مێژووی کڕینی یەک کەس"),
+        BotCommand("add", "➕ زیادکردنی کارت"),
+        BotCommand("stock", "📦 ئاماری کۆگا"),
+        BotCommand("viewcodes", "👀 بینینی کۆدەکان"),
+        BotCommand("delcode", "🗑 سڕینەوەی کۆدی هەڵە"),
+        BotCommand("clearcodes", "🧹 خاوێنکردنەوەی جۆرێک"),
+        BotCommand("setlimit", "🚧 دانانی سنووری قەرز"),
+        BotCommand("broadcast", "📢 ناردنی نامەی گشتی"),
+        BotCommand("update", "✨ ناردنی نامەی نوێکاری"),
+        BotCommand("open", "🔓 کردنەوەی فرۆشگا"),
+        BotCommand("close", "🔒 داخستنی فرۆشگا"),
+        BotCommand("autoclose", "⏰ سیستەمی داخستنی ئۆتۆماتیک"),
+        BotCommand("backup", "💾 وەرگرتنی باکئەپ"),
+        BotCommand("restore", "🔄 گەڕاندنەوەی باکئەپ"),
+    ]
+    try: bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
+    except: pass
 
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەی کرەشکردنی Railway چارەسەر کرا.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. هەموو فەرمانەکان گەڕێندرانەوە و خرانە ناو مێنوو.")
 setup_bot_commands()
 bot.infinity_polling()
