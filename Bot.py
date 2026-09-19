@@ -5,7 +5,7 @@ import datetime
 import time
 import os
 import re
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 
 TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
 ADMIN_ID = 1229224919
@@ -20,7 +20,6 @@ conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 db_lock = threading.Lock()
 pending_refunds = {}
 
-# بۆ پاراستنی بۆتەکە لە کرەشکردن بەهۆی ناوەکانەوە
 def escape_md(text):
     if not text: return "نەناسراو"
     return str(text).replace('_', '\\_').replace('*', '\\*').replace('`', '\\`').replace('[', '\\[')
@@ -683,7 +682,6 @@ def announce_update(message):
             bot.reply_to(message, f"✅ نامەی نوێکاری و مێنووی نوێ بۆ {count} کڕیار نێردرا.")
         else: bot.reply_to(message, "تکایە دەق بنووسە: /update پەیامەکەت")
 
-# ================== بەشی جزدان و قەرزدانەوە ==================
 @bot.callback_query_handler(func=lambda call: call.data == 'add_wallet_req')
 def add_wallet_req(call):
     try: bot.answer_callback_query(call.id)
@@ -764,14 +762,6 @@ def reject_debt_payment(call):
     except: pass
     try: bot.send_message(target_uid, "❌ خاوەن فرۆشگا داواکاری سفرکردنەوەی قەرزەکەی ڕەتکردەوە.")
     except: pass
-
-# ================== بەشی کڕین (کڕینی خێرا) ==================
-def check_and_alert_low_stock(c, types_sold):
-    for ct in set(types_sold):
-        c.execute('SELECT COUNT(*) FROM codes WHERE card_type = ?', (ct,))
-        if c.fetchone()[0] <= 2:
-            try: bot.send_message(ADMIN_ID, f"⚠️ کارتی **{ct}$** زۆر کەمە لە کۆگا!", parse_mode='Markdown')
-            except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data == 'reqstock_cancel')
 def reqstock_cancel(call):
@@ -1066,7 +1056,6 @@ def handle_all_texts(message):
         try: bot.send_message(ADMIN_ID, f"🔔 **ئاگاداری دانەوەی قەرز:**\n\nکڕیار: {escape_md(message.from_user.first_name)} (`{uid}`)\nقەرزی لەسەرە: **{debt_info}**\n\nئایا ئەم کڕیارە قەرزەکەی داوەتەوە؟", parse_mode='Markdown', reply_markup=markup)
         except: pass
 
-    # دوگمە نوێیەکانی ئەدمین
     elif message.text == "🛠 دەفتەری قەرزەکان" and uid == ADMIN_ID:
         show_debt_users_menu(message.chat.id)
     elif message.text == "💼 دەفتەری جزدانەکان" and uid == ADMIN_ID:
@@ -1080,10 +1069,23 @@ def handle_all_texts(message):
         if message.text.startswith('/'): return
         bot.reply_to(message, "تکایە تەنها لە ڕێگەی دوگمەکانی خوارەوە داواکارییەکەت هەڵبژێرە.", reply_markup=current_markup)
 
+def setup_bot_commands():
+    user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")]
+    try: bot.set_my_commands(user_commands)
+    except: pass
+
+def auto_schedule_checker():
+    while True:
+        now_time = time.time()
+        to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
+        for rid in to_delete: del pending_refunds[rid]
+        time.sleep(30)
+
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەی کرەشکردن و Loading لە ڕەگەوە چارەسەر کرا.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەی کرەشکردنی Railway چارەسەر کرا.")
+setup_bot_commands()
 bot.infinity_polling()
