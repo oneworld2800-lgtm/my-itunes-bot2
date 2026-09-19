@@ -943,9 +943,13 @@ def process_direct_buy(call):
             except: pass
             return
 
+        # لێرەدا کێشەی نەخوێندنەوەی دوگمەکانمان چارەسەر کرد
+        parts = call.data.split('_')
+        target_val = parts[-2]
+        qty = int(parts[-1])
+
         if is_mixed:
-            parts = call.data.split('_')
-            target, qty = int(parts[2]), int(parts[3])
+            target = int(target_val)
             assigned_codes = get_dynamic_combo(c, target, qty)
             if not assigned_codes:
                 bot.answer_callback_query(call.id, f"ببورە، کارتی پێویست لە کۆگا نەماوە.", show_alert=True)
@@ -954,8 +958,7 @@ def process_direct_buy(call):
             total_usd = target * qty
             total_iqd = sum(prices.get(x['type'], 0) for x in assigned_codes)
         else:
-            parts = call.data.split('_')
-            target, qty = parts[2], int(parts[3])
+            target = target_val
             c.execute('SELECT id, code FROM codes WHERE card_type = ? LIMIT ?', (target, qty))
             res = c.fetchall()
             if len(res) < qty:
@@ -1140,7 +1143,6 @@ def handle_text_buttons(message):
     elif message.text == "✅ قەرزەکەم داوەتەوە":
         bot.reply_to(message, "⏳ داواکارییەکەت نێردرا بۆ خاوەن فرۆشگا.", reply_markup=current_markup)
         
-        # دروستکردنی دوگمەی پەسەندکردن بۆ ئەدمین
         markup = InlineKeyboardMarkup()
         markup.add(
             InlineKeyboardButton("✅ بەڵێ (سفرکردنەوە)", callback_data=f"confirm_pay_{uid}"),
@@ -1216,6 +1218,6 @@ checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. هەموو فەرمانەکان جێگیرکراون و دوگمەکانی قەرزدانەوە گەڕێندراونەتەوە.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەی نەخوێندنەوەی دوگمەی کڕین چارەسەر کرا.")
 setup_bot_commands()
 bot.infinity_polling()
