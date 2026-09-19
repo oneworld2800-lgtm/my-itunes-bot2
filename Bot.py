@@ -5,7 +5,7 @@ import datetime
 import time
 import os
 import re
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand
 
 TOKEN = '8781704084:AAHCCyZ79ud30w3z0sMF9hxpLme4izV6DMA'
 ADMIN_ID = 1229224919
@@ -139,27 +139,11 @@ def parse_smart_order(text):
     return target, qty, is_mixed
 
 def get_purchase_markup(uid, target, qty, total_iqd, is_mixed=False):
-    with db_lock:
-        c = conn.cursor()
-        c.execute('SELECT wallet_iqd FROM debts WHERE user_id = ?', (uid,))
-        res = c.fetchone()
-        wallet_bal = res[0] if res else 0
-
+    # کڕینی خێرا: تەنها یەک دوگمەی کڕین دەردەکەوێت
     markup = InlineKeyboardMarkup(row_width=1)
-    prefix = "smartmix" if is_mixed else "finalbuy"
-    w_prefix = "wbuy_mix" if is_mixed else "wbuy_std"
+    prefix = "wbuy_mix" if is_mixed else "wbuy_std"
     
-    if wallet_bal > 0:
-        if wallet_bal >= total_iqd:
-            markup.add(InlineKeyboardButton(f"👛 کڕین بە جزدان (لێبڕینی {total_iqd:,} د)", callback_data=f"{w_prefix}_{target}_{qty}"))
-        else:
-            remaining_debt = total_iqd - wallet_bal
-            markup.add(InlineKeyboardButton(f"👛 بەکارهێنانی جزدان ({wallet_bal:,} د) + قەرز ({remaining_debt:,} د)", callback_data=f"{w_prefix}_{target}_{qty}"))
-            
-        markup.add(InlineKeyboardButton(f"📒 نەخێر، هەمووی بخەرە سەر قەرز", callback_data=f"{prefix}_{target}_{qty}"))
-    else:
-        markup.add(InlineKeyboardButton("✅ پەسەندکردن و کڕین (بە قەرز)", callback_data=f"{prefix}_{target}_{qty}"))
-        
+    markup.add(InlineKeyboardButton("✅ پەسەندکردن و کڕینی خێرا", callback_data=f"{prefix}_{target}_{qty}"))
     markup.add(InlineKeyboardButton("❌ پەشیمان بوونەوە", callback_data="cancel_smart_order"))
     return markup
 
@@ -176,7 +160,6 @@ def send_welcome(message):
         welcome_text = "سڵاو! بەخێربێیت بۆ فرۆشگای تایبەتی ئایتونس. 🍏\n\nئەم فرۆشگایە لەلایەن **هیلال** بەڕێوە دەبرێت.\n\nتکایە لە دوگمەکانی خوارەوە هەڵبژێرە، یان ڕاستەوخۆ بە نووسین (بۆ نموونە: 2 کارتی 5 یان 13) داواکارییەکەت بنێرە:"
         bot.reply_to(message, welcome_text, reply_markup=get_main_menu(user_id), parse_mode='Markdown')
     else: bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە.\nئایدی تۆ: `{user_id}`")
-
 
 # ================== سەرجەم ٢٥ فەرمانەکانی ئەدمین ==================
 
@@ -865,7 +848,7 @@ def reject_debt_payment(call):
     try: bot.send_message(target_uid, "❌ خاوەن فرۆشگا داواکاری سفرکردنەوەی قەرزەکەی ڕەتکردەوە.")
     except: pass
 
-# ================== بەشی کڕین و سەبەتە ==================
+# ================== بەشی کڕین (کڕینی خێرا) ==================
 def check_and_alert_low_stock(c, types_sold):
     for ct in set(types_sold):
         c.execute('SELECT COUNT(*) FROM codes WHERE card_type = ?', (ct,))
@@ -885,33 +868,17 @@ def back_to_buy_list(call):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('buys_'))
 def handle_qty_selection(call):
+    # بێ پرسیار ڕاستەوخۆ دەچێتە سەر کڕینی یەک کارت
     ctype = call.data.split('_')[1]
-    markup = InlineKeyboardMarkup(row_width=2)
-    markup.add(InlineKeyboardButton("1 دانە", callback_data=f"paymethod_std_{ctype}_1"), InlineKeyboardButton("2 دانە", callback_data=f"paymethod_std_{ctype}_2"))
-    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy_list"))
-    try: bot.edit_message_text(f"💳 **کارتی {ctype}$**\nژمارە دیاری بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
-    except: pass
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('paymethod_'))
-def handle_payment_method(call):
-    parts = call.data.split('_')
-    is_mixed = parts[1] == 'mix'
-    target = int(parts[2]) if is_mixed else parts[2]
-    qty = int(parts[3])
+    target = ctype
+    qty = 1
+    total_iqd = prices.get(target, 0)
     
-    total_iqd = 0
-    if is_mixed:
-        with db_lock:
-            assigned = get_dynamic_combo(conn.cursor(), target, qty)
-            if not assigned:
-                bot.answer_callback_query(call.id, "ببورە، کارتی پێویست لە کۆگا نەماوە.", show_alert=True)
-                return
-            total_iqd = sum(prices.get(x['type'], 0) for x in assigned)
-    else:
-        total_iqd = qty * prices.get(str(target), 0)
-        
-    markup = get_purchase_markup(call.from_user.id, target, qty, total_iqd, is_mixed)
-    try: bot.edit_message_text(f"🛒 **دووپاتکردنەوەی کڕین:**\n\nکۆی نرخەکە: **{total_iqd:,} دینار**.\nتکایە شێوازی پارەدان هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+    markup = get_purchase_markup(call.from_user.id, target, qty, total_iqd, is_mixed=False)
+    markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="back_to_buy_list"))
+    
+    text = f"🛒 **دووپاتکردنەوەی کڕین:**\n\nکارتی دیاریکراو: **{target}$**\nکۆی نرخەکە: **{total_iqd:,} دینار**\n\nتکایە کڕینەکە پەسەند بکە:"
+    try: bot.edit_message_text(text, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
     except: pass
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith('finalbuy_') or call.data.startswith('buym_') or call.data.startswith('smartmix_') or call.data.startswith('wbuy_'))
@@ -939,11 +906,10 @@ def process_direct_buy(call):
                 return
             total_iqd = sum(prices.get(x['type'], 0) for x in assigned_codes)
             markup = get_purchase_markup(uid, target, qty, total_iqd, is_mixed=True)
-            try: bot.edit_message_text(f"🛒 **دووپاتکردنەوەی کڕین:**\n\nکۆی نرخەکە: **{total_iqd:,} دینار**.\nتکایە شێوازی پارەدان هەڵبژێرە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
+            try: bot.edit_message_text(f"🛒 **دووپاتکردنەوەی کڕین:**\n\nکۆی نرخەکە: **{total_iqd:,} دینار**.\nتکایە کڕینەکە پەسەند بکە:", chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
             except: pass
             return
 
-        # لێرەدا کێشەی نەخوێندنەوەی دوگمەکانمان چارەسەر کرد
         parts = call.data.split('_')
         target_val = parts[-2]
         qty = int(parts[-1])
@@ -977,6 +943,7 @@ def process_direct_buy(call):
         iqd_to_add = total_iqd
         wallet_deducted = 0
 
+        # سیستەمی ئۆتۆماتیکی لێبڕین
         if use_wallet and wallet_iqd > 0:
             if wallet_iqd >= total_iqd:
                 wallet_deducted = total_iqd
@@ -1196,14 +1163,14 @@ def smart_order_and_fallback(message):
             total_iqd = qty * prices.get(str(target), 0)
             
         markup = get_purchase_markup(uid, target, qty, total_iqd, is_mixed)
-        bot.send_message(message.chat.id, f"🛒 **پێشنیاری زیرەک:**\n\nتۆ داوای **{qty}** داواکاری جۆری **{target}$** دەکەیت.\nکۆی گشتی: **{total_iqd:,} دینار**\n\nتکایە شێوازی پارەدان هەڵبژێرە:", reply_markup=markup, parse_mode='Markdown')
+        bot.send_message(message.chat.id, f"🛒 **پێشنیاری زیرەک:**\n\nتۆ داوای **{qty}** داواکاری جۆری **{target}$** دەکەیت.\nکۆی گشتی: **{total_iqd:,} دینار**\n\nتکایە کڕینەکە پەسەند بکە:", reply_markup=markup, parse_mode='Markdown')
         bot.send_message(message.chat.id, "🔄", reply_markup=current_markup)
     else:
         bot.reply_to(message, "🔄 مێنوی دوگمەکانت نوێکرایەوە.\nتێبینی: دەتوانیت ڕاستەوخۆ ژمارە بنووسیت (وەک: 13 یان 5 2).", reply_markup=current_markup)
 
 def setup_bot_commands():
     user_commands = [BotCommand("start", "🚀 دەستپێکردنی بۆت"), BotCommand("about", "ℹ️ دەربارەی فرۆشگا"), BotCommand("contact", "📞 پەیوەندیکردن بە خاوەن فرۆشگا")]
-    try: bot.set_my_commands(user_commands, scope=BotCommandScopeDefault())
+    try: bot.set_my_commands(user_commands)
     except: pass
 
 def auto_schedule_checker():
@@ -1218,6 +1185,6 @@ checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەی نەخوێندنەوەی دوگمەی کڕین چارەسەر کرا.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. سیستەمی کڕینی خێرا و ئۆتۆماتیکی جێگیر کرا.")
 setup_bot_commands()
 bot.infinity_polling()
