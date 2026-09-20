@@ -34,6 +34,10 @@ def init_db():
         c.execute('''CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)''')
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("store_status", "open")')
         c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("close_reason", "")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_enabled", "0")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_start", "00:00")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("auto_close_end", "08:00")')
+        c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("last_auto_trigger", "")')
         
         try:
             c.execute('ALTER TABLE debts ADD COLUMN wallet_iqd INTEGER DEFAULT 0')
@@ -45,7 +49,6 @@ init_db()
 
 prices = {'2': 3000, '3': 4500, '4': 6000, '5': 7000, '10': 14000, '15': 22000}
 
-# فەرمانی ئاگادارکردنەوەی کۆگا کە بووە هۆی کێشەکە، بەتەواوی گەڕێندرایەوە و جێگیر کرا
 def check_and_alert_low_stock(c, types_sold):
     for ct in set(types_sold):
         c.execute('SELECT COUNT(*) FROM codes WHERE card_type = ?', (ct,))
@@ -99,7 +102,6 @@ def get_store_status():
         return status, reason
 
 def get_main_menu(user_id):
-    # مێنووی خوارەوە ڕێک وەک هی کڕیار لێکراوە تەنانەت بۆ ئەدمینیش بۆ ئەوەی ئاڵۆز نەبێت
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(KeyboardButton("🛒 کڕینی کارت"), KeyboardButton("🔀 ئایتونسی جیاواز"))
     markup.add(KeyboardButton("💰 قەرزەکانم"), KeyboardButton("👛 جزدانەکەم"))
@@ -126,7 +128,7 @@ def send_welcome(message):
         bot.reply_to(message, welcome_text, reply_markup=get_main_menu(user_id), parse_mode='Markdown')
     else: bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە.\nئایدی تۆ: `{user_id}`")
 
-# ================== فەرمانەکانی ئەدمین (لەمەودوا تەنها لە مێنووی شینەوە کار دەکەن) ==================
+# ================== فەرمانەکانی ئەدمین ==================
 
 @bot.message_handler(commands=['about'])
 def about_store(message):
@@ -151,6 +153,7 @@ def set_autoclose(message):
             with db_lock:
                 c = conn.cursor()
                 c.execute('UPDATE settings SET value="0" WHERE key="auto_close_enabled"')
+                c.execute('UPDATE settings SET value="" WHERE key="last_auto_trigger"')
                 conn.commit()
             bot.reply_to(message, "✅ سیستەمی داخستنی ئۆتۆماتیکی ڕاگیرا.")
         elif len(args) == 3:
@@ -160,6 +163,7 @@ def set_autoclose(message):
                 c.execute('UPDATE settings SET value="1" WHERE key="auto_close_enabled"')
                 c.execute('UPDATE settings SET value=? WHERE key="auto_close_start"', (start_t,))
                 c.execute('UPDATE settings SET value=? WHERE key="auto_close_end"', (end_t,))
+                c.execute('UPDATE settings SET value="" WHERE key="last_auto_trigger"')
                 conn.commit()
             bot.reply_to(message, f"✅ سیستەمی ئۆتۆماتیکی چالاککرا لە {start_t} بۆ {end_t}.")
         else: bot.reply_to(message, "شێواز هەڵەیە: /autoclose 00:00 08:00 یان /autoclose off")
@@ -788,7 +792,6 @@ def uhist_user_selected(call):
         hist = c.fetchall()
     if hist:
         msg = f"📜 **مێژووی کڕینەکانی:** {escape_md(name)}\n\n"
-        # خاڵی ژمارە ٢: نیشاندانی کۆدەکان بە شێوەیەک کە بە پەنجە لێدان کۆپی ببن
         for ctype, prc, cd, dt in hist: 
             msg += f"💳 **{ctype}** | {prc:,} د\n{cd}\n📅 {dt}\n------------------\n"
         markup = InlineKeyboardMarkup()
@@ -864,7 +867,6 @@ def handle_database_restore(message):
             bot.reply_to(message, "✅ داتابەیس گەڕێندرایەوە.")
         except: bot.reply_to(message, "❌ کێشە ڕوویدا.")
 
-# ================== بەشی جزدان و قەرزدانەوە ==================
 @bot.callback_query_handler(func=lambda call: call.data == 'add_wallet_req')
 def add_wallet_req(call):
     try: bot.answer_callback_query(call.id)
@@ -1072,7 +1074,6 @@ def process_direct_quick_buy(call):
                 except: pass
                 return
 
-            # خاڵی ژمارە ٢: نیشاندانی کۆدەکان بە شێوەیەک کە بە پەنجە لێدان کۆپی ببن
             code_texts, refund_data_codes = [], []
             for item in assigned_codes:
                 c.execute('DELETE FROM codes WHERE id = ?', (item['id'],))
@@ -1094,7 +1095,6 @@ def process_direct_quick_buy(call):
             f"🛒 **جۆر:** {history_desc}\n💰 **نرخی گشتی:** {total_usd}$ ({total_iqd:,} د){wallet_receipt_text}{debt_receipt_text}\n📊 **قەرزی نوێ:** {current_debt_usd + usd_to_add}$/ {limit}$\n━━━━━━━━━━━━━━━━━━━━\n"
             "🎁 **کۆدەکان:**\n\n"
         )
-        # خاڵی ژمارە ٢ بۆ وەسڵەکان
         receipt += "\n".join([f"▫️ کارتی {x['type']}$:\n`{x['code']}`\n" for x in assigned_codes]) + "\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
         
         receipt_id = str(int(time.time())) + "_" + str(uid)
@@ -1245,6 +1245,73 @@ def handle_all_texts(message):
         if message.text.startswith('/'): return
         bot.reply_to(message, "تکایە تەنها لە ڕێگەی دوگمەکانی خوارەوە داواکارییەکەت هەڵبژێرە.", reply_markup=current_markup)
 
+# فەرمانی چاودێریکردنی ئۆتۆماتیکی
+def auto_schedule_checker():
+    while True:
+        try:
+            # ١. سڕینەوەی ئەو پسوڵانەی کاتیان بەسەر چووە (پەشیمان بوونەوە)
+            now_time = time.time()
+            to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
+            for rid in to_delete: del pending_refunds[rid]
+            
+            # ٢. سیستەمی داخستنی ئۆتۆماتیکی
+            with db_lock:
+                c = conn.cursor()
+                c.execute('SELECT key, value FROM settings')
+                settings = dict(c.fetchall())
+            
+            if settings.get('auto_close_enabled') == "1":
+                start_t = settings.get('auto_close_start', '00:00')
+                end_t = settings.get('auto_close_end', '08:00')
+                last_trigger = settings.get('last_auto_trigger', '')
+                
+                # وەرگرتنی کاتی ئێستا بە کاتی کوردستان (+3 کاتژمێر)
+                now_utc = datetime.datetime.utcnow()
+                now_local = now_utc + datetime.timedelta(hours=3)
+                curr_t = now_local.strftime("%H:%M")
+                
+                # بڕیاردان ئایا ئێستا کاتی داخستنە؟
+                if start_t < end_t:
+                    is_closed_time = start_t <= curr_t < end_t
+                else:
+                    is_closed_time = curr_t >= start_t or curr_t < end_t
+                
+                if is_closed_time:
+                    if last_trigger != 'auto_closed':
+                        reason = f"🔒 فرۆشگا داخرا.\nئەمە سیستەمی داخستنی ئۆتۆماتیکییە تا کاتژمێر {end_t}."
+                        with db_lock:
+                            c = conn.cursor()
+                            c.execute('UPDATE settings SET value="closed" WHERE key="store_status"')
+                            c.execute('UPDATE settings SET value=? WHERE key="close_reason"', (reason,))
+                            c.execute('UPDATE settings SET value="auto_closed" WHERE key="last_auto_trigger"')
+                            c.execute('SELECT user_id FROM allowed_users')
+                            users = c.fetchall()
+                            conn.commit()
+                        
+                        broadcast_msg = f"📢 **ئاگاداری لە فرۆشگاوە:**\n\n{reason}"
+                        for (uid,) in users:
+                            try: bot.send_message(uid, broadcast_msg, parse_mode='Markdown')
+                            except: pass
+                else:
+                    if last_trigger == 'auto_closed':
+                        with db_lock:
+                            c = conn.cursor()
+                            c.execute('UPDATE settings SET value="open" WHERE key="store_status"')
+                            c.execute('UPDATE settings SET value="auto_opened" WHERE key="last_auto_trigger"')
+                            c.execute('SELECT user_id FROM allowed_users')
+                            users = c.fetchall()
+                            conn.commit()
+                            
+                        broadcast_msg = "📢 **ئاگاداری لە فرۆشگاوە:**\n\n🔓 فرۆشگاکە ئێستا کرایەوە! 🍏\nدەتوانن کڕینەکانتان ئەنجام بدەن."
+                        for (uid,) in users:
+                            try: bot.send_message(uid, broadcast_msg, parse_mode='Markdown')
+                            except: pass
+                            
+        except Exception as e:
+            print(f"Auto-close error: {e}")
+            
+        time.sleep(30)
+
 def setup_bot_commands():
     user_commands = [
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
@@ -1289,18 +1356,11 @@ def setup_bot_commands():
     try: bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
     except: pass
 
-def auto_schedule_checker():
-    while True:
-        now_time = time.time()
-        to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
-        for rid in to_delete: del pending_refunds[rid]
-        time.sleep(30)
-
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەکە ڕیشەکێش کرا.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. سیستەمی داخستنی ئۆتۆماتیکی (بە کاتی کوردستان) چالاک کرا.")
 setup_bot_commands()
 bot.infinity_polling()
