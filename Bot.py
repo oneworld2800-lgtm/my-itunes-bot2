@@ -4,7 +4,6 @@ import threading
 import datetime
 import time
 import os
-import re
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, BotCommand, BotCommandScopeDefault, BotCommandScopeChat
 
 TOKEN = '8781704084:AAHQP7CEA-GRLLeeG4ZBV_wqK8N3Ba8qPcA'
@@ -45,6 +44,15 @@ def init_db():
 init_db()
 
 prices = {'2': 3000, '3': 4500, '4': 6000, '5': 7000, '10': 14000, '15': 22000}
+
+# فەرمانی ئاگادارکردنەوەی کۆگا کە بووە هۆی کێشەکە، بەتەواوی گەڕێندرایەوە و جێگیر کرا
+def check_and_alert_low_stock(c, types_sold):
+    for ct in set(types_sold):
+        c.execute('SELECT COUNT(*) FROM codes WHERE card_type = ?', (ct,))
+        res = c.fetchone()
+        if res and res[0] <= 2:
+            try: bot.send_message(ADMIN_ID, f"⚠️ کارتی **{ct}$** زۆر کەمە لە کۆگا!", parse_mode='Markdown')
+            except: pass
 
 def get_dynamic_combo(c, target_val, qty=1):
     available_cards = [15, 10, 5, 4, 3, 2]
@@ -91,6 +99,7 @@ def get_store_status():
         return status, reason
 
 def get_main_menu(user_id):
+    # مێنووی خوارەوە ڕێک وەک هی کڕیار لێکراوە تەنانەت بۆ ئەدمینیش بۆ ئەوەی ئاڵۆز نەبێت
     markup = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     markup.add(KeyboardButton("🛒 کڕینی کارت"), KeyboardButton("🔀 ئایتونسی جیاواز"))
     markup.add(KeyboardButton("💰 قەرزەکانم"), KeyboardButton("👛 جزدانەکەم"))
@@ -117,7 +126,7 @@ def send_welcome(message):
         bot.reply_to(message, welcome_text, reply_markup=get_main_menu(user_id), parse_mode='Markdown')
     else: bot.reply_to(message, f"ببورە، ئەم بۆتە تایبەتە.\nئایدی تۆ: `{user_id}`")
 
-# ================== فەرمانەکانی ئەدمین ==================
+# ================== فەرمانەکانی ئەدمین (لەمەودوا تەنها لە مێنووی شینەوە کار دەکەن) ==================
 
 @bot.message_handler(commands=['about'])
 def about_store(message):
@@ -703,7 +712,7 @@ def show_userdebt_menu(chat_id, message_id=None):
         else: bot.send_message(chat_id, text)
         return
     markup = InlineKeyboardMarkup(row_width=1)
-    for uid, name in users: markup.add(InlineKeyboardButton(f"👤 {name} ({usd}$)", callback_data=f"udebt_u_{uid}"))
+    for uid, name, usd in users: markup.add(InlineKeyboardButton(f"👤 {name} ({usd}$)", callback_data=f"udebt_u_{uid}"))
     markup.add(InlineKeyboardButton("❌ داخستن", callback_data="delete_msg"))
     text = "🆔 **سەیرکردنی قەرزی یەک کەس:**"
     if message_id:
@@ -779,7 +788,9 @@ def uhist_user_selected(call):
         hist = c.fetchall()
     if hist:
         msg = f"📜 **مێژووی کڕینەکانی:** {escape_md(name)}\n\n"
-        for ctype, prc, cd, dt in hist: msg += f"💳 **{ctype}** | {prc:,} د\n🔑 `{cd}`\n📅 {dt}\n------------------\n"
+        # خاڵی ژمارە ٢: نیشاندانی کۆدەکان بە شێوەیەک کە بە پەنجە لێدان کۆپی ببن
+        for ctype, prc, cd, dt in hist: 
+            msg += f"💳 **{ctype}** | {prc:,} د\n{cd}\n📅 {dt}\n------------------\n"
         markup = InlineKeyboardMarkup()
         markup.add(InlineKeyboardButton("🔙 گەڕانەوە", callback_data="uhist_back"))
         try: bot.edit_message_text(msg, chat_id=call.message.chat.id, message_id=call.message.message_id, reply_markup=markup, parse_mode='Markdown')
@@ -1061,10 +1072,11 @@ def process_direct_quick_buy(call):
                 except: pass
                 return
 
+            # خاڵی ژمارە ٢: نیشاندانی کۆدەکان بە شێوەیەک کە بە پەنجە لێدان کۆپی ببن
             code_texts, refund_data_codes = [], []
             for item in assigned_codes:
                 c.execute('DELETE FROM codes WHERE id = ?', (item['id'],))
-                code_texts.append(f"▫️ کارتی {item['type']}$: `{item['code']}`")
+                code_texts.append(f"▫️ کارتی {item['type']}$:\n`{item['code']}`")
                 refund_data_codes.append((item['id'], item['code'], item['type']))
 
             c.execute('UPDATE debts SET usd = usd + ?, iqd = iqd + ? WHERE user_id = ?', (usd_to_add, iqd_to_add, uid))
@@ -1082,7 +1094,8 @@ def process_direct_quick_buy(call):
             f"🛒 **جۆر:** {history_desc}\n💰 **نرخی گشتی:** {total_usd}$ ({total_iqd:,} د){wallet_receipt_text}{debt_receipt_text}\n📊 **قەرزی نوێ:** {current_debt_usd + usd_to_add}$/ {limit}$\n━━━━━━━━━━━━━━━━━━━━\n"
             "🎁 **کۆدەکان:**\n\n"
         )
-        receipt += "\n".join([f"▫️ کارتی {x['type']}$: `{x['code']}`" for x in assigned_codes]) + "\n\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
+        # خاڵی ژمارە ٢ بۆ وەسڵەکان
+        receipt += "\n".join([f"▫️ کارتی {x['type']}$:\n`{x['code']}`\n" for x in assigned_codes]) + "\nزۆر سوپاس بۆ متمانەت! 🍏 هیلال"
         
         receipt_id = str(int(time.time())) + "_" + str(uid)
         pending_refunds[receipt_id] = {
@@ -1232,13 +1245,6 @@ def handle_all_texts(message):
         if message.text.startswith('/'): return
         bot.reply_to(message, "تکایە تەنها لە ڕێگەی دوگمەکانی خوارەوە داواکارییەکەت هەڵبژێرە.", reply_markup=current_markup)
 
-def auto_schedule_checker():
-    while True:
-        now_time = time.time()
-        to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
-        for rid in to_delete: del pending_refunds[rid]
-        time.sleep(30)
-
 def setup_bot_commands():
     user_commands = [
         BotCommand("start", "🚀 دەستپێکردنی بۆت"),
@@ -1283,11 +1289,18 @@ def setup_bot_commands():
     try: bot.set_my_commands(admin_commands, scope=BotCommandScopeChat(ADMIN_ID))
     except: pass
 
+def auto_schedule_checker():
+    while True:
+        now_time = time.time()
+        to_delete = [rid for rid, data in pending_refunds.items() if now_time > data['expiry'] + 60]
+        for rid in to_delete: del pending_refunds[rid]
+        time.sleep(30)
+
 checker_thread = threading.Thread(target=auto_schedule_checker, daemon=True)
 checker_thread.start()
 backup_thread = threading.Thread(target=auto_periodic_backup, daemon=True)
 backup_thread.start()
 
-print("✅ بۆتەکە بەتەواوی کار دەکات. فەرمانەکان گەڕێندرانەوە و کێشەی وەستانەکە چارەسەر کرا.")
+print("✅ بۆتەکە بەتەواوی کار دەکات. کێشەکە ڕیشەکێش کرا.")
 setup_bot_commands()
 bot.infinity_polling()
